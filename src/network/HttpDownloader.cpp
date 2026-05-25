@@ -163,6 +163,14 @@ bool HttpDownloader::fetchUrl(const std::string& url, std::string& outContent, c
   return runGet(url, username, password, sink) == OK;
 }
 
+bool HttpDownloader::fetchUrl(const std::string& url, const DataCallback& onData, const std::string& username,
+                              const std::string& password) {
+  LOG_DBG("HTTP", "Fetching: %s", url.c_str());
+  Sink sink;
+  sink.write = onData;
+  return runGet(url, username, password, sink) == OK;
+}
+
 HttpDownloader::DownloadError HttpDownloader::downloadToFile(const std::string& url, const std::string& destPath,
                                                              ProgressCallback progress, bool* cancelFlag,
                                                              const std::string& username, const std::string& password) {
