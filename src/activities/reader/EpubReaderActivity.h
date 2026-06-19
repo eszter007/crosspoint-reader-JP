@@ -2,6 +2,7 @@
 #include <Epub.h>
 #include <Epub/FootnoteEntry.h>
 #include <Epub/Section.h>
+#include <Epub/VerticalSection.h>
 
 #include <optional>
 
@@ -12,6 +13,7 @@
 class EpubReaderActivity final : public Activity {
   std::shared_ptr<Epub> epub;
   std::unique_ptr<Section> section = nullptr;
+  std::unique_ptr<VerticalSection> verticalSection = nullptr;
   int currentSpineIndex = 0;
   int nextPageNumber = 0;
   std::optional<uint16_t> pendingPageJump;
