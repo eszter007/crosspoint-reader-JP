@@ -380,3 +380,18 @@ int CrossPointSettings::getReaderFontId() const {
       }
   }
 }
+
+int CrossPointSettings::getRubyFontId() const {
+  if (sdFontFamilyName[0] != '\0' && sdFontIdResolver) {
+    int id = sdFontIdResolver(sdFontResolverCtx, sdFontFamilyName, SMALL);
+    if (id != 0) return id;
+  }
+
+  switch (fontFamily) {
+    case NOTOSANS:
+      return NOTOSANS_12_FONT_ID;
+    case NOTOSERIF:
+    default:
+      return NOTOSERIF_12_FONT_ID;
+  }
+}

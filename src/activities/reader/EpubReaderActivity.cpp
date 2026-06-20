@@ -937,7 +937,8 @@ void EpubReaderActivity::render(RenderLock&& lock) {
       currentPageFootnotes.clear();
       const auto start = millis();
       VerticalTextBlock block(*vpage);
-      block.render(renderer, SETTINGS.getReaderFontId(), orientedMarginLeft, orientedMarginTop, true);
+      block.render(renderer, SETTINGS.getReaderFontId(), SETTINGS.getRubyFontId(), orientedMarginLeft, orientedMarginTop,
+                   true);
       LOG_DBG("ERS", "Rendered vertical page in %dms", millis() - start);
     }
 

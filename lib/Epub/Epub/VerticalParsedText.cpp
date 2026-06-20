@@ -84,8 +84,86 @@ void VerticalParsedText::addParagraph(const std::string& utf8Text) {
       i += consumed;
       continue;
     }
-    stream_.push_back(PendingChar{cp, paragraphIndex, static_cast<uint32_t>(i)});
+    stream_.push_back(PendingChar{cp, paragraphIndex, static_cast<uint32_t>(i), {}});
     i += consumed;
+  }
+}
+
+void VerticalParsedText::addAnnotatedParagraph(const std::vector<RubyRun>& runs) {
+  const uint32_t paragraphIndex = static_cast<uint32_t>(paragraphBreaksBeforeIndex_.size());
+  paragraphBreaksBeforeIndex_.push_back(stream_.size());
+
+  for (const auto& run : runs) {
+    if (run.baseText.empty()) continue;
+
+    // Decode base text into codepoints, then distribute ruby across them.
+    std::vector<size_t> baseOffsets;
+    std::vector<uint32_t> baseCps;
+    {
+      size_t i = 0;
+      while (i < run.baseText.size()) {
+        size_t consumed = 1;
+        const uint32_t cp = decodeUtf8At(run.baseText, i, &consumed);
+        if (cp == '\n' || cp == '\r' || cp == '\t') {
+          i += consumed;
+          continue;
+        }
+        baseOffsets.push_back(i);
+        baseCps.push_back(cp);
+        i += consumed;
+      }
+    }
+
+    if (baseCps.empty()) continue;
+
+    if (run.rubyText.empty()) {
+      for (size_t k = 0; k < baseCps.size(); k++) {
+        stream_.push_back(
+            PendingChar{baseCps[k], paragraphIndex, static_cast<uint32_t>(baseOffsets[k]), {}});
+      }
+    } else {
+      // Decode ruby codepoints to distribute evenly across base characters.
+      std::vector<uint32_t> rubyCps;
+      {
+        size_t ri = 0;
+        while (ri < run.rubyText.size()) {
+          size_t consumed = 1;
+          rubyCps.push_back(decodeUtf8At(run.rubyText, ri, &consumed));
+          ri += consumed;
+        }
+      }
+
+      // Distribute ruby codepoints across base characters. Each base char
+      // gets a roughly equal share of the annotation string, re-encoded
+      // back to UTF-8.
+      const size_t baseCount = baseCps.size();
+      const size_t rubyCount = rubyCps.size();
+      for (size_t k = 0; k < baseCount; k++) {
+        const size_t rubyStart = rubyCount * k / baseCount;
+        const size_t rubyEnd = rubyCount * (k + 1) / baseCount;
+        std::string slice;
+        for (size_t r = rubyStart; r < rubyEnd; r++) {
+          const uint32_t rcp = rubyCps[r];
+          if (rcp < 0x80) {
+            slice.push_back(static_cast<char>(rcp));
+          } else if (rcp < 0x800) {
+            slice.push_back(static_cast<char>(0xC0 | (rcp >> 6)));
+            slice.push_back(static_cast<char>(0x80 | (rcp & 0x3F)));
+          } else if (rcp < 0x10000) {
+            slice.push_back(static_cast<char>(0xE0 | (rcp >> 12)));
+            slice.push_back(static_cast<char>(0x80 | ((rcp >> 6) & 0x3F)));
+            slice.push_back(static_cast<char>(0x80 | (rcp & 0x3F)));
+          } else {
+            slice.push_back(static_cast<char>(0xF0 | (rcp >> 18)));
+            slice.push_back(static_cast<char>(0x80 | ((rcp >> 12) & 0x3F)));
+            slice.push_back(static_cast<char>(0x80 | ((rcp >> 6) & 0x3F)));
+            slice.push_back(static_cast<char>(0x80 | (rcp & 0x3F)));
+          }
+        }
+        stream_.push_back(PendingChar{baseCps[k], paragraphIndex,
+                                       static_cast<uint32_t>(baseOffsets[k]), std::move(slice)});
+      }
+    }
   }
 }
 
@@ -134,6 +212,7 @@ std::vector<VerticalPage> VerticalParsedText::layoutPages() {
     g.paragraphIndex = pc.paragraphIndex;
     g.byteOffset = pc.byteOffset;
     g.rotated = false;
+    g.rubyText = pc.rubyText;
     page.glyphs.push_back(g);
   };
 
@@ -243,6 +322,7 @@ std::vector<VerticalPage> VerticalParsedText::layoutPages() {
       g.paragraphIndex = pc.paragraphIndex;
       g.byteOffset = pc.byteOffset;
       g.rotated = false;
+      g.rubyText = pc.rubyText;
       page.glyphs.push_back(g);
       idx++;
       continue;

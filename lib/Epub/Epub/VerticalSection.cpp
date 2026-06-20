@@ -13,13 +13,41 @@
 
 namespace {
 
-constexpr uint8_t VSECTION_FILE_VERSION = 1;
+constexpr uint8_t VSECTION_FILE_VERSION = 2;
 constexpr size_t PARSE_BUFFER_SIZE = 1024;
 
+using RubyRun = VerticalParsedText::RubyRun;
+
 struct TextExtractor {
-  std::vector<std::string> paragraphs;
+  // Each paragraph is a sequence of RubyRun entries. Unannotated text has
+  // empty ruby; annotated text (<ruby>base<rt>reading</rt></ruby>) maps
+  // base -> rubyText.
+  std::vector<std::vector<RubyRun>> paragraphs;
+  std::vector<RubyRun> currentRuns;
   std::string currentText;
   int blockDepth = 0;
+
+  // Ruby parsing state
+  bool inRuby = false;
+  bool inRt = false;
+  bool inRp = false;
+  std::string rubyBase;
+  std::string rubyAnnotation;
+
+  void flushCurrentText() {
+    if (!currentText.empty()) {
+      currentRuns.push_back(RubyRun{std::move(currentText), {}});
+      currentText.clear();
+    }
+  }
+
+  void flushParagraph() {
+    flushCurrentText();
+    if (!currentRuns.empty()) {
+      paragraphs.push_back(std::move(currentRuns));
+      currentRuns.clear();
+    }
+  }
 
   static bool isBlockTag(const char* name) {
     static constexpr const char* blockTags[] = {"p",  "div", "h1", "h2",   "h3",  "h4",
@@ -33,59 +61,109 @@ struct TextExtractor {
   static void XMLCALL startElement(void* userData, const char* name, const char** /*atts*/) {
     auto* self = static_cast<TextExtractor*>(userData);
     if (isBlockTag(name)) {
-      if (self->blockDepth == 0 && !self->currentText.empty()) {
-        self->paragraphs.push_back(std::move(self->currentText));
-        self->currentText.clear();
+      if (self->blockDepth == 0) {
+        self->flushParagraph();
       }
       self->blockDepth++;
     }
+    if (strcasecmp(name, "ruby") == 0) {
+      self->flushCurrentText();
+      self->inRuby = true;
+      self->rubyBase.clear();
+      self->rubyAnnotation.clear();
+    } else if (strcasecmp(name, "rt") == 0) {
+      self->inRt = true;
+      self->rubyAnnotation.clear();
+    } else if (strcasecmp(name, "rp") == 0) {
+      self->inRp = true;
+    }
     if (strcasecmp(name, "br") == 0 || strcasecmp(name, "br/") == 0) {
-      self->currentText.push_back('\n');
+      if (!self->inRuby) {
+        self->currentText.push_back('\n');
+      }
     }
   }
 
   static void XMLCALL endElement(void* userData, const char* name) {
     auto* self = static_cast<TextExtractor*>(userData);
+    if (strcasecmp(name, "rp") == 0) {
+      self->inRp = false;
+      return;
+    }
+    if (strcasecmp(name, "rt") == 0) {
+      self->inRt = false;
+      // Emit a RubyRun for the base text accumulated so far with this annotation.
+      if (!self->rubyBase.empty()) {
+        self->currentRuns.push_back(RubyRun{std::move(self->rubyBase), std::move(self->rubyAnnotation)});
+        self->rubyBase.clear();
+      }
+      self->rubyAnnotation.clear();
+      return;
+    }
+    if (strcasecmp(name, "ruby") == 0) {
+      // Flush any remaining base text that had no <rt> (malformed markup).
+      if (!self->rubyBase.empty()) {
+        self->currentRuns.push_back(RubyRun{std::move(self->rubyBase), {}});
+        self->rubyBase.clear();
+      }
+      self->inRuby = false;
+      return;
+    }
     if (isBlockTag(name)) {
       self->blockDepth--;
       if (self->blockDepth <= 0) {
         self->blockDepth = 0;
-        if (!self->currentText.empty()) {
-          self->paragraphs.push_back(std::move(self->currentText));
-          self->currentText.clear();
-        }
+        self->flushParagraph();
       }
     }
   }
 
   static void XMLCALL characterData(void* userData, const char* s, int len) {
     auto* self = static_cast<TextExtractor*>(userData);
-    self->currentText.append(s, static_cast<size_t>(len));
+    if (self->inRp) return;
+    if (self->inRt) {
+      self->rubyAnnotation.append(s, static_cast<size_t>(len));
+    } else if (self->inRuby) {
+      self->rubyBase.append(s, static_cast<size_t>(len));
+    } else {
+      self->currentText.append(s, static_cast<size_t>(len));
+    }
   }
 
   static void XMLCALL defaultHandler(void* userData, const char* s, int len) {
-    // Handle &nbsp; and similar HTML entities that expat can't resolve on its own.
     if (len >= 4 && s[0] == '&') {
       auto* self = static_cast<TextExtractor*>(userData);
       std::string entity(s, static_cast<size_t>(len));
+      std::string resolved;
       if (entity == "&nbsp;") {
-        self->currentText.push_back(' ');
+        resolved = " ";
       } else if (entity == "&mdash;") {
-        self->currentText.append("\xe2\x80\x94");
+        resolved = "\xe2\x80\x94";
       } else if (entity == "&ndash;") {
-        self->currentText.append("\xe2\x80\x93");
+        resolved = "\xe2\x80\x93";
       } else if (entity == "&hellip;") {
-        self->currentText.append("\xe2\x80\xa6");
+        resolved = "\xe2\x80\xa6";
       } else if (entity == "&amp;") {
-        self->currentText.push_back('&');
+        resolved = "&";
       } else if (entity == "&lt;") {
-        self->currentText.push_back('<');
+        resolved = "<";
       } else if (entity == "&gt;") {
-        self->currentText.push_back('>');
+        resolved = ">";
       } else if (entity == "&quot;") {
-        self->currentText.push_back('"');
+        resolved = "\"";
       } else if (entity == "&apos;") {
-        self->currentText.push_back('\'');
+        resolved = "'";
+      } else {
+        return;
+      }
+
+      if (self->inRp) return;
+      if (self->inRt) {
+        self->rubyAnnotation.append(resolved);
+      } else if (self->inRuby) {
+        self->rubyBase.append(resolved);
+      } else {
+        self->currentText.append(resolved);
       }
     }
   }
@@ -172,9 +250,7 @@ bool VerticalSection::extractParagraphsAndLayout(const int fontId, const uint16_
 
   if (!parseOk) return false;
 
-  if (!extractor.currentText.empty()) {
-    extractor.paragraphs.push_back(std::move(extractor.currentText));
-  }
+  extractor.flushParagraph();
 
   if (extractor.paragraphs.empty()) {
     pages.clear();
@@ -184,7 +260,7 @@ bool VerticalSection::extractParagraphsAndLayout(const int fontId, const uint16_
 
   VerticalParsedText layout(renderer, fontId, viewportWidth, viewportHeight);
   for (const auto& para : extractor.paragraphs) {
-    layout.addParagraph(para);
+    layout.addAnnotatedParagraph(para);
   }
   pages = layout.layoutPages();
   pageCount = static_cast<uint16_t>(pages.size());
@@ -229,6 +305,12 @@ bool VerticalSection::saveToCache(const int fontId, const uint16_t viewportWidth
         if (runLen > 0) {
           file.write(reinterpret_cast<const uint8_t*>(g.rotatedRunText.data()), runLen);
         }
+      }
+
+      const auto rubyLen = static_cast<uint16_t>(g.rubyText.size());
+      serialization::writePod(file, rubyLen);
+      if (rubyLen > 0) {
+        file.write(reinterpret_cast<const uint8_t*>(g.rubyText.data()), rubyLen);
       }
     }
   }
@@ -298,6 +380,13 @@ bool VerticalSection::loadFromCache(const int fontId, const uint16_t viewportWid
           g.rotatedRunText.resize(runLen);
           file.read(reinterpret_cast<uint8_t*>(g.rotatedRunText.data()), runLen);
         }
+      }
+
+      uint16_t rubyLen;
+      serialization::readPod(file, rubyLen);
+      if (rubyLen > 0) {
+        g.rubyText.resize(rubyLen);
+        file.read(reinterpret_cast<uint8_t*>(g.rubyText.data()), rubyLen);
       }
       page.glyphs.push_back(std::move(g));
     }

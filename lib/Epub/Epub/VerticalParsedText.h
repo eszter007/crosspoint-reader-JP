@@ -26,6 +26,9 @@ struct VerticalGlyph {
   // GfxRenderer::drawTextRotated90CW() call rather than per-codepoint.
   // codepoint is unused (0) for rotated entries.
   std::string rotatedRunText;
+  // Furigana/ruby annotation for this glyph (UTF-8). Rendered in a smaller
+  // font to the right of the base character in vertical layout.
+  std::string rubyText;
 };
 
 // One screen's worth of vertically laid out text, ready to hand to
@@ -57,7 +60,6 @@ struct VerticalPage {
 //     per-run bold/italic/underline styling or inline images.
 //   - Punctuation (、 。 etc.) is rendered centered in its cell rather than
 //     shifted to the upper-right as strict tategaki typesetting prefers.
-//   - No furigana/ruby support.
 class VerticalParsedText {
  public:
   VerticalParsedText(const GfxRenderer& renderer, int fontId, uint16_t viewportWidth, uint16_t viewportHeight);
@@ -68,6 +70,17 @@ class VerticalParsedText {
   // to, so the caller is responsible for keeping its own paragraph-index
   // -> original-text mapping if it needs to resolve lookups later.
   void addParagraph(const std::string& utf8Text);
+
+  // A single run of base text optionally annotated with ruby (furigana).
+  // For <ruby>漢<rt>かん</rt>字<rt>じ</rt></ruby>, this produces two
+  // RubyRun entries: {"漢", "かん"} and {"字", "じ"}.
+  // Unannotated text has empty ruby.
+  struct RubyRun {
+    std::string baseText;
+    std::string rubyText;
+  };
+
+  void addAnnotatedParagraph(const std::vector<RubyRun>& runs);
 
   // Runs the column-fill layout algorithm over everything added so far and
   // returns one VerticalPage per screen's worth of content. Call this once
@@ -92,6 +105,7 @@ class VerticalParsedText {
     uint32_t codepoint;
     uint32_t paragraphIndex;
     uint32_t byteOffset;
+    std::string rubyText;
   };
 
   // Flattened, paragraph-tagged codepoint stream built up by addParagraph()
