@@ -99,6 +99,17 @@ static constexpr Rule kRules[] = {
     {"\xe3\x82\x8a\xe3\x81\xbe\xe3\x81\x99", "\xe3\x82\x8b", WordCondition::DICT, WordCondition::V5},  // ります→る
     {"\xe3\x81\x84\xe3\x81\xbe\xe3\x81\x99", "\xe3\x81\x86", WordCondition::DICT, WordCondition::V5},  // います→う
 
+    // Godan masu-stem (連用形): bare い-row ending (used for compound verbs and nominal forms)
+    {"\xe3\x81\x8d", "\xe3\x81\x8f", WordCondition::DICT, WordCondition::V5},  // き→く
+    {"\xe3\x81\x8e", "\xe3\x81\x90", WordCondition::DICT, WordCondition::V5},  // ぎ→ぐ
+    {"\xe3\x81\x97", "\xe3\x81\x99", WordCondition::DICT, WordCondition::V5},  // し→す
+    {"\xe3\x81\xa1", "\xe3\x81\xa4", WordCondition::DICT, WordCondition::V5},  // ち→つ
+    {"\xe3\x81\xab", "\xe3\x81\xac", WordCondition::DICT, WordCondition::V5},  // に→ぬ
+    {"\xe3\x81\xb3", "\xe3\x81\xb6", WordCondition::DICT, WordCondition::V5},  // び→ぶ
+    {"\xe3\x81\xbf", "\xe3\x82\x80", WordCondition::DICT, WordCondition::V5},  // み→む
+    {"\xe3\x82\x8a", "\xe3\x82\x8b", WordCondition::DICT, WordCondition::V5},  // り→る
+    {"\xe3\x81\x84", "\xe3\x81\x86", WordCondition::DICT, WordCondition::V5},  // い→う
+
     // Godan passive: replace あ-row + れる
     {"\xe3\x81\x8b\xe3\x82\x8c\xe3\x82\x8b", "\xe3\x81\x8f", WordCondition::V1, WordCondition::V5},  // かれる→く
     {"\xe3\x81\x8c\xe3\x82\x8c\xe3\x82\x8b", "\xe3\x81\x90", WordCondition::V1, WordCondition::V5},  // がれる→ぐ
