@@ -64,8 +64,10 @@ void HomeActivity::loadRecentCovers(int coverHeight) {
         // If epub, try to load the metadata for title/author and cover
         if (FsHelpers::hasEpubExtension(book.path)) {
           Epub epub(book.path, "/.crosspoint");
-          // Skip loading css since we only need metadata here
-          epub.load(false, true);
+          // Build the metadata cache if missing so the cover can be generated on
+          // the first home visit (e.g. right after the book was added to recents
+          // but before book.bin exists). Skip CSS — only metadata is needed here.
+          epub.load(true, true);
 
           // Try to generate thumbnail image for Continue Reading card
           if (!showingLoading) {
@@ -78,7 +80,12 @@ void HomeActivity::loadRecentCovers(int coverHeight) {
             RECENT_BOOKS.updateBook(book.path, book.title, book.author, "");
             book.coverBmpPath = "";
           }
+          // Discard the placeholder buffer captured on the first paint so the
+          // next render redraws the real cover instead of restoring the stale
+          // (cover-not-yet-generated) snapshot.
           coverRendered = false;
+          coverBufferStored = false;
+          freeCoverBuffer();
           requestUpdate();
         } else if (FsHelpers::hasXtcExtension(book.path)) {
           // Handle XTC file
@@ -96,6 +103,8 @@ void HomeActivity::loadRecentCovers(int coverHeight) {
               book.coverBmpPath = "";
             }
             coverRendered = false;
+            coverBufferStored = false;
+            freeCoverBuffer();
             requestUpdate();
           }
         }
