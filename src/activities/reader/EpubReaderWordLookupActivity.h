@@ -44,4 +44,10 @@ class EpubReaderWordLookupActivity final : public Activity {
   std::string buildLookupText(size_t startIdx) const;
 
   static void encodeUtf8(uint32_t cp, std::string& out);
+
+  bool initialRenderDone = false;
+  int fastRefreshCount = 0;
+  static constexpr int kFullRefreshInterval = 10;
+
+  void renderContentArea(const Rect& screen, int contentTop);
 };

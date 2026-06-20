@@ -33,13 +33,14 @@ void EpubReaderWordLookupActivity::onExit() { Activity::onExit(); }
 
 void EpubReaderWordLookupActivity::moveCursor(int delta) {
   if (selectableGlyphs.empty()) return;
+  int prev = cursorIndex;
   cursorIndex += delta;
   if (cursorIndex < 0) cursorIndex = 0;
   if (cursorIndex >= static_cast<int>(selectableGlyphs.size())) {
     cursorIndex = static_cast<int>(selectableGlyphs.size()) - 1;
   }
-  hasResult = false;
-  requestUpdate();
+  if (cursorIndex == prev) return;
+  performLookup();
 }
 
 void EpubReaderWordLookupActivity::encodeUtf8(uint32_t cp, std::string& out) {
@@ -116,27 +117,23 @@ void EpubReaderWordLookupActivity::loop() {
   buttonNavigator.onPressAndContinuous({MappedInputManager::Button::Left}, [this] { moveCursor(-10); });
 }
 
-void EpubReaderWordLookupActivity::render(RenderLock&&) {
-  renderer.clearScreen();
-
-  auto& theme = UITheme::getInstance();
-  auto metrics = theme.getMetrics();
-  Rect screen = theme.getScreenSafeArea(renderer, true, false);
-
-  GUI.drawHeader(renderer, Rect{screen.x, screen.y + metrics.topPadding, screen.width, metrics.headerHeight},
-                 tr(STR_WORD_LOOKUP));
+void EpubReaderWordLookupActivity::renderContentArea(const Rect& screen, int contentTop) {
+  auto metrics = UITheme::getInstance().getMetrics();
 
   if (selectableGlyphs.empty()) {
     UITheme::drawCenteredText(renderer, screen, UI_12_FONT_ID,
                               screen.y + screen.height / 2, tr(STR_NO_MATCH), true);
   } else if (hasResult) {
-    const int contentTop = screen.y + metrics.topPadding + metrics.headerHeight + metrics.verticalSpacing;
     const int maxWidth = screen.width - metrics.horizontalPadding * 2;
     const int textX = screen.x + metrics.horizontalPadding;
 
-    renderer.drawText(UI_12_FONT_ID, textX, contentTop, resultHeadword.c_str(), true, EpdFontFamily::BOLD);
+    std::string posText = std::to_string(cursorIndex + 1) + "/" + std::to_string(selectableGlyphs.size());
+    renderer.drawText(SMALL_FONT_ID, textX, contentTop, posText.c_str(), true);
 
-    int defY = contentTop + renderer.getLineHeight(UI_12_FONT_ID) + metrics.verticalSpacing;
+    int headY = contentTop + renderer.getLineHeight(SMALL_FONT_ID) + 2;
+    renderer.drawText(UI_12_FONT_ID, textX, headY, resultHeadword.c_str(), true, EpdFontFamily::BOLD);
+
+    int defY = headY + renderer.getLineHeight(UI_12_FONT_ID) + metrics.verticalSpacing;
 
     auto lines = renderer.wrappedText(SMALL_FONT_ID, resultDefinition.c_str(), maxWidth, 8);
     for (const auto& line : lines) {
@@ -144,13 +141,9 @@ void EpubReaderWordLookupActivity::render(RenderLock&&) {
       defY += renderer.getLineHeight(SMALL_FONT_ID);
     }
 
-    // Attribution
     defY += metrics.verticalSpacing;
     renderer.drawText(SMALL_FONT_ID, textX, defY, tr(STR_DICT_CREDIT), true);
   } else {
-    // Show cursor character preview
-    const int contentTop = screen.y + metrics.topPadding + metrics.headerHeight + metrics.verticalSpacing * 2;
-
     std::string preview;
     encodeUtf8(selectableGlyphs[cursorIndex].codepoint, preview);
 
@@ -160,7 +153,6 @@ void EpubReaderWordLookupActivity::render(RenderLock&&) {
     UITheme::drawCenteredText(renderer, screen, SMALL_FONT_ID,
                               contentTop + renderer.getLineHeight(UI_12_FONT_ID) + 4, posText.c_str(), true);
 
-    // Show a text preview of the next few characters
     std::string windowPreview = buildLookupText(static_cast<size_t>(cursorIndex));
     if (!windowPreview.empty()) {
       UITheme::drawCenteredText(renderer, screen, UI_12_FONT_ID,
@@ -168,9 +160,42 @@ void EpubReaderWordLookupActivity::render(RenderLock&&) {
                                 true);
     }
   }
+}
 
-  const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_SELECT), tr(STR_DIR_UP), tr(STR_DIR_DOWN));
-  GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+void EpubReaderWordLookupActivity::render(RenderLock&&) {
+  auto& theme = UITheme::getInstance();
+  auto metrics = theme.getMetrics();
+  Rect screen = theme.getScreenSafeArea(renderer, true, false);
 
-  renderer.displayBuffer();
+  const int contentTop = screen.y + metrics.topPadding + metrics.headerHeight + metrics.verticalSpacing;
+  const int footerHeight = renderer.getLineHeight(SMALL_FONT_ID) + metrics.verticalSpacing;
+  const int contentBottom = screen.y + screen.height - footerHeight;
+
+  if (!initialRenderDone) {
+    renderer.clearScreen();
+
+    GUI.drawHeader(renderer, Rect{screen.x, screen.y + metrics.topPadding, screen.width, metrics.headerHeight},
+                   tr(STR_WORD_LOOKUP));
+
+    renderContentArea(screen, contentTop);
+
+    const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_SELECT), tr(STR_DIR_UP), tr(STR_DIR_DOWN));
+    GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+
+    renderer.displayBuffer();
+    initialRenderDone = true;
+    fastRefreshCount = 0;
+  } else {
+    renderer.fillRect(screen.x, contentTop, screen.width, contentBottom - contentTop, false);
+
+    renderContentArea(screen, contentTop);
+
+    fastRefreshCount++;
+    if (fastRefreshCount >= kFullRefreshInterval) {
+      renderer.displayBuffer(HalDisplay::HALF_REFRESH);
+      fastRefreshCount = 0;
+    } else {
+      renderer.displayBuffer(HalDisplay::FAST_REFRESH);
+    }
+  }
 }
