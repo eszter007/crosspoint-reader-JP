@@ -5,6 +5,7 @@
 #include <I18n.h>
 #include <WordLookup.h>
 
+#include "CrossPointSettings.h"
 #include "MappedInputManager.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
@@ -119,6 +120,7 @@ void EpubReaderWordLookupActivity::loop() {
 
 void EpubReaderWordLookupActivity::renderContentArea(const Rect& screen, int contentTop) {
   auto metrics = UITheme::getInstance().getMetrics();
+  const int jaFont = SETTINGS.getReaderFontId();
 
   if (selectableGlyphs.empty()) {
     UITheme::drawCenteredText(renderer, screen, UI_12_FONT_ID,
@@ -131,14 +133,14 @@ void EpubReaderWordLookupActivity::renderContentArea(const Rect& screen, int con
     renderer.drawText(SMALL_FONT_ID, textX, contentTop, posText.c_str(), true);
 
     int headY = contentTop + renderer.getLineHeight(SMALL_FONT_ID) + 2;
-    renderer.drawText(UI_12_FONT_ID, textX, headY, resultHeadword.c_str(), true, EpdFontFamily::BOLD);
+    renderer.drawText(jaFont, textX, headY, resultHeadword.c_str(), true, EpdFontFamily::BOLD);
 
-    int defY = headY + renderer.getLineHeight(UI_12_FONT_ID) + metrics.verticalSpacing;
+    int defY = headY + renderer.getLineHeight(jaFont) + metrics.verticalSpacing;
 
-    auto lines = renderer.wrappedText(SMALL_FONT_ID, resultDefinition.c_str(), maxWidth, 8);
+    auto lines = renderer.wrappedText(jaFont, resultDefinition.c_str(), maxWidth, 8);
     for (const auto& line : lines) {
-      renderer.drawText(SMALL_FONT_ID, textX, defY, line.c_str(), true);
-      defY += renderer.getLineHeight(SMALL_FONT_ID);
+      renderer.drawText(jaFont, textX, defY, line.c_str(), true);
+      defY += renderer.getLineHeight(jaFont);
     }
 
     defY += metrics.verticalSpacing;
@@ -148,15 +150,15 @@ void EpubReaderWordLookupActivity::renderContentArea(const Rect& screen, int con
     encodeUtf8(selectableGlyphs[cursorIndex].codepoint, preview);
 
     std::string posText = std::to_string(cursorIndex + 1) + "/" + std::to_string(selectableGlyphs.size());
-    UITheme::drawCenteredText(renderer, screen, UI_12_FONT_ID, contentTop, preview.c_str(), true,
+    UITheme::drawCenteredText(renderer, screen, jaFont, contentTop, preview.c_str(), true,
                               EpdFontFamily::BOLD);
     UITheme::drawCenteredText(renderer, screen, SMALL_FONT_ID,
-                              contentTop + renderer.getLineHeight(UI_12_FONT_ID) + 4, posText.c_str(), true);
+                              contentTop + renderer.getLineHeight(jaFont) + 4, posText.c_str(), true);
 
     std::string windowPreview = buildLookupText(static_cast<size_t>(cursorIndex));
     if (!windowPreview.empty()) {
-      UITheme::drawCenteredText(renderer, screen, UI_12_FONT_ID,
-                                contentTop + renderer.getLineHeight(UI_12_FONT_ID) + 30, windowPreview.c_str(),
+      UITheme::drawCenteredText(renderer, screen, jaFont,
+                                contentTop + renderer.getLineHeight(jaFont) + 30, windowPreview.c_str(),
                                 true);
     }
   }
