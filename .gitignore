@@ -10,6 +10,7 @@ lib/I18n/I18nStrings.cpp
 .vs
 build
 **/__pycache__/
+dev/dict_host_test/dtest
 /compile_commands.json
 /.cache
 .history/
