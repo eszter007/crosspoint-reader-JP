@@ -349,7 +349,12 @@ int CrossPointSettings::getReaderFontId() const {
   if (sdFontFamilyName[0] != '\0' && sdFontIdResolver) {
     int id = sdFontIdResolver(sdFontResolverCtx, sdFontFamilyName, fontSize);
     if (id != 0) return id;
-    // Fall through to built-in if SD font not found
+  }
+
+  // In vertical text mode, try UDDigiKyokasho if installed on SD card
+  if (verticalTextMode && sdFontIdResolver) {
+    int id = sdFontIdResolver(sdFontResolverCtx, "UDDigiKyokasho", fontSize);
+    if (id != 0) return id;
   }
 
   switch (fontFamily) {
@@ -384,6 +389,11 @@ int CrossPointSettings::getReaderFontId() const {
 int CrossPointSettings::getRubyFontId() const {
   if (sdFontFamilyName[0] != '\0' && sdFontIdResolver) {
     int id = sdFontIdResolver(sdFontResolverCtx, sdFontFamilyName, SMALL);
+    if (id != 0) return id;
+  }
+
+  if (verticalTextMode && sdFontIdResolver) {
+    int id = sdFontIdResolver(sdFontResolverCtx, "UDDigiKyokasho", SMALL);
     if (id != 0) return id;
   }
 

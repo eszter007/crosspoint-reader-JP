@@ -220,6 +220,17 @@ families:
       italic:     {path: "builtinFonts/source/OpenDyslexic/OpenDyslexic-Italic.otf"}
       bolditalic: {path: "builtinFonts/source/OpenDyslexic/OpenDyslexic-BoldItalic.otf"}
 
+  # ── Japanese ────────────────────────────────────────────────────────────
+
+  - name: UDDigiKyokasho
+    description: "Japanese textbook font (CJK, Latin)"
+    intervals: cjk,latin-ext
+    sizes: [12, 14, 16, 18]
+    force_autohint: true
+    styles:
+      regular:    {url: "https://github.com/Bluemoondragon07/UD-Digi-Kyokasho-Font/raw/main/UDDigiKyokashoN-R-01.ttf"}
+      bold:       {url: "https://github.com/Bluemoondragon07/UD-Digi-Kyokasho-Font/raw/main/UDDigiKyokashoN-B-01.ttf"}
+
   # ── Accessibility ──────────────────────────────────────────────────────
 
   - name: AtkinsonHyperlegibleNext

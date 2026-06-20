@@ -56,6 +56,13 @@ void SdCardFontSystem::ensureLoaded(GfxRenderer& renderer) {
   }
 
   const char* wantedFamily = SETTINGS.sdFontFamilyName;
+
+  // In vertical text mode with no explicit SD font, auto-select UDDigiKyokasho
+  static constexpr const char* VERTICAL_DEFAULT_FONT = "UDDigiKyokasho";
+  if (wantedFamily[0] == '\0' && SETTINGS.verticalTextMode && registry_.findFamily(VERTICAL_DEFAULT_FONT)) {
+    wantedFamily = VERTICAL_DEFAULT_FONT;
+  }
+
   const std::string& currentFamily = manager_.currentFamilyName();
   const uint8_t sizeEnum = fontSizeEnumFromSettings();
 
