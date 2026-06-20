@@ -19,9 +19,10 @@ EpubReaderWordLookupActivity::EpubReaderWordLookupActivity(GfxRenderer& renderer
     : Activity("WordLookup", renderer, mappedInput) {
   selectableGlyphs.reserve(page.glyphs.size());
   for (const auto& g : page.glyphs) {
-    if (g.rotated) continue;
+    const bool isRotated = (g.renderKind == VerticalGlyph::RotatedRun);
+    if (isRotated) continue;
     selectableGlyphs.push_back(
-        GlyphRef{g.x, g.y, g.column, g.row, g.codepoint, g.paragraphIndex, g.rotated});
+        GlyphRef{g.x, g.y, g.column, g.row, g.codepoint, g.paragraphIndex, isRotated});
   }
 }
 

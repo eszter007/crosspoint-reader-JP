@@ -42,4 +42,17 @@ bool isAlwaysUpright(uint32_t codepoint);
 // number embedded in Japanese running text.
 bool isRotatedRunCharacter(uint32_t codepoint);
 
+// Returns a shift category for vertical punctuation positioning:
+// 0 = no shift, 1 = comma/period (shift up+right)
+int verticalShiftType(uint32_t codepoint);
+
+// True for paired brackets/parens and dashes that should be rotated 90° in
+// vertical text rather than drawn upright (they need to open/close or run
+// along the vertical axis).
+bool needsVerticalRotation(uint32_t codepoint);
+
+// True for small (yoon/sokuon) kana, which in tategaki are shifted toward the
+// upper-right of their cell relative to a centered position.
+bool isSmallKana(uint32_t codepoint);
+
 } // namespace Kinsoku

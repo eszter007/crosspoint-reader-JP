@@ -200,6 +200,8 @@ class GfxRenderer {
   /// Returns the kerning adjustment between two adjacent codepoints.
   int getKerning(int fontId, uint32_t leftCp, uint32_t rightCp, EpdFontFamily::Style style) const;
   int getTextAdvanceX(int fontId, const char* text, EpdFontFamily::Style style) const;
+  bool getGlyphMetrics(int fontId, uint32_t cp, EpdFontFamily::Style style, int* left, int* width, int* top,
+                       int* height) const;
   int getFontAscenderSize(int fontId) const;
   int getLineHeight(int fontId) const;
   std::string truncatedText(int fontId, const char* text, int maxWidth,
@@ -213,6 +215,19 @@ class GfxRenderer {
   // Helper for drawing rotated text (90 degrees clockwise, for side buttons)
   void drawTextRotated90CW(int fontId, int x, int y, const char* text, bool black = true,
                            EpdFontFamily::Style style = EpdFontFamily::REGULAR) const;
+  void drawTextRotated90CCW(int fontId, int x, int y, const char* text, bool black = true,
+                            EpdFontFamily::Style style = EpdFontFamily::REGULAR) const;
+  // Renders a single upright codepoint flush to the top-right corner of the
+  // cell box [cellLeftX, cellLeftX+cellSize] × [cellTopY, cellTopY+cellSize],
+  // using the glyph's own metrics. Used for vertical-text small kana.
+  void drawCharVerticalCornerTopRight(int fontId, int cellLeftX, int cellTopY, int cellSize, uint32_t cp,
+                                      bool black = true, EpdFontFamily::Style style = EpdFontFamily::REGULAR) const;
+  // Renders a single codepoint rotated 90° CCW and positioned inside a vertical
+  // cell. shiftType is from Kinsoku::verticalShiftType():
+  // 0=no bias, 2=closing bracket, 3=opening bracket, 4=dash/choonpu.
+  void drawCharVerticalRotatedInCell(int fontId, int cellLeftX, int cellTopY, int cellSize, uint32_t cp,
+                                     int shiftType, bool black = true,
+                                     EpdFontFamily::Style style = EpdFontFamily::REGULAR) const;
   int getTextHeight(int fontId) const;
 
   // Grayscale functions

@@ -13,18 +13,29 @@ class GfxRenderer;
 // (x, y), find the nearest VerticalGlyph, then walk byteOffset backwards/
 // forwards to find word boundaries before firing off a lookup.
 struct VerticalGlyph {
+  // How this glyph is drawn in vertical layout:
+  //   Upright          - normal CJK/kana, drawn at the baseline anchor (x,y).
+  //   RotatedRun       - sideways Latin/number run rotated 90° CCW; x,y is the
+  //                      rotation baseline anchor; rotatedRunText holds text.
+  //   UprightRun       - short upright inline run (e.g. 2-digit tate-chu-yoko)
+  //                      drawn unrotated; x,y is the baseline anchor.
+  //   RotatedPunct     - a single bracket/dash rotated 90° CCW and aligned in
+  //                      its cell using glyph metrics; x,y is the cell top-left
+  //                      and codepoint holds the character.
+  //   SmallKanaCorner  - small (yoon/sokuon) kana placed toward the cell's
+  //                      top-right corner; x,y is the cell's top-left and
+  //                      codepoint holds the character.
+  enum RenderKind : uint8_t { Upright = 0, RotatedRun = 1, RotatedPunct = 2, SmallKanaCorner = 3, UprightRun = 4 };
+
   uint32_t codepoint = 0;
   uint16_t column = 0;      // 0 = rightmost column on the page
   uint16_t row = 0;          // 0 = topmost cell in the column
-  uint16_t x = 0;            // logical screen-space draw position (baseline x)
-  uint16_t y = 0;            // logical screen-space draw position (baseline y)
+  uint16_t x = 0;            // logical screen-space draw position
+  uint16_t y = 0;            // logical screen-space draw position
   uint32_t paragraphIndex = 0;
   uint32_t byteOffset = 0;   // UTF-8 byte offset into that paragraph's text
-  bool rotated = false;      // true = part of a sideways Latin/number run
-  // Only populated when rotated == true: the full run text (already
-  // reversed into render order), since a rotated run is drawn as one
-  // GfxRenderer::drawTextRotated90CW() call rather than per-codepoint.
-  // codepoint is unused (0) for rotated entries.
+  uint8_t renderKind = Upright;
+  // Populated for run render kinds (RotatedRun/UprightRun).
   std::string rotatedRunText;
   // Furigana/ruby annotation for this glyph (UTF-8). Rendered in a smaller
   // font to the right of the base character in vertical layout.
@@ -58,8 +69,8 @@ struct VerticalPage {
 // v1 scope / known limitations (see docs/vertical-text-design.md):
 //   - Operates on plain paragraph text; does not currently consume
 //     per-run bold/italic/underline styling or inline images.
-//   - Punctuation (、 。 etc.) is rendered centered in its cell rather than
-//     shifted to the upper-right as strict tategaki typesetting prefers.
+//   - Punctuation (、 。 etc.) is shifted toward the upper-right of its cell
+//     for tategaki, but the offset is an approximation (half cellPx).
 class VerticalParsedText {
  public:
   VerticalParsedText(const GfxRenderer& renderer, int fontId, uint16_t viewportWidth, uint16_t viewportHeight);
@@ -93,6 +104,9 @@ class VerticalParsedText {
   // setter so EpubReaderActivity can wire it to a reader setting instead
   // of a hardcoded constant.
   void setColumnGapPx(int gapPx) { columnGapPx_ = gapPx; }
+  // Extra right-side padding (in pixels) reserved for vertical ruby so it
+  // doesn't clip against the right edge.
+  void setRightPaddingPx(int padPx) { rightPaddingPx_ = (padPx < 0) ? 0 : padPx; }
 
  private:
   const GfxRenderer& renderer_;
@@ -100,6 +114,7 @@ class VerticalParsedText {
   uint16_t viewportWidth_;
   uint16_t viewportHeight_;
   int columnGapPx_ = 0;
+  int rightPaddingPx_ = 0;
 
   struct PendingChar {
     uint32_t codepoint;

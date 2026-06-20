@@ -3,6 +3,7 @@
 #include <cstring>
 
 #include "GfxRenderer.h"
+#include "Kinsoku.h"
 
 namespace {
 constexpr int kNoStyle = 0;
@@ -26,13 +27,36 @@ void encodeCodepoint(uint32_t cp, std::string& out) {
 }
 
 void drawGlyphs(GfxRenderer& renderer, const VerticalPage& page, int fontId, int offsetX, int offsetY, bool black) {
+  const int cellPx = renderer.getLineHeight(fontId);
+  const int globalDownNudge = std::max(1, (cellPx * 3) / 8);
   for (const VerticalGlyph& g : page.glyphs) {
     const int dx = g.x + offsetX;
-    const int dy = g.y + offsetY;
+    int dy = g.y + offsetY + globalDownNudge;
 
-    if (g.rotated) {
-      renderer.drawTextRotated90CW(fontId, dx, dy, g.rotatedRunText.c_str(), black,
-                                    static_cast<EpdFontFamily::Style>(kNoStyle));
+    if (g.renderKind == VerticalGlyph::RotatedRun) {
+      renderer.drawTextRotated90CCW(fontId, dx, dy, g.rotatedRunText.c_str(), black,
+                                     static_cast<EpdFontFamily::Style>(kNoStyle));
+      continue;
+    }
+
+    if (g.renderKind == VerticalGlyph::UprightRun) {
+      renderer.drawText(fontId, dx, dy, g.rotatedRunText.c_str(), black, static_cast<EpdFontFamily::Style>(kNoStyle));
+      continue;
+    }
+
+    if (g.renderKind == VerticalGlyph::RotatedPunct) {
+      const int shiftType = Kinsoku::verticalShiftType(g.codepoint);
+      if (g.codepoint == 0x2025 || g.codepoint == 0x2026 || shiftType == 4) {
+        dy += std::max(1, (cellPx * 5) / 8);
+      }
+      renderer.drawCharVerticalRotatedInCell(fontId, dx, dy, cellPx, g.codepoint, shiftType, black,
+                                             static_cast<EpdFontFamily::Style>(kNoStyle));
+      continue;
+    }
+
+    if (g.renderKind == VerticalGlyph::SmallKanaCorner) {
+      renderer.drawCharVerticalCornerTopRight(fontId, dx, dy, cellPx, g.codepoint, black,
+                                              static_cast<EpdFontFamily::Style>(kNoStyle));
       continue;
     }
 
@@ -58,7 +82,9 @@ void VerticalTextBlock::render(GfxRenderer& renderer, int fontId, int rubyFontId
   const auto rubyStyle = static_cast<EpdFontFamily::Style>(EpdFontFamily::SUP);
 
   for (const VerticalGlyph& g : page_.glyphs) {
-    if (g.rubyText.empty() || g.rotated) continue;
+    if (g.rubyText.empty() || g.renderKind == VerticalGlyph::RotatedRun || g.renderKind == VerticalGlyph::UprightRun) {
+      continue;
+    }
 
     const int rubyX = g.x + offsetX + baseLineH + 1;
 
@@ -76,7 +102,8 @@ void VerticalTextBlock::render(GfxRenderer& renderer, int fontId, int rubyFontId
     }
 
     const int rubyBlockH = static_cast<int>(rubyCharCount) * rubyLineH;
-    int rubyY = g.y + offsetY + (baseLineH - rubyBlockH) / 2 - rubyLineH;
+    const int rubyDownNudge = std::max(3, (rubyLineH * 4) / 5);
+    int rubyY = g.y + offsetY + (baseLineH - rubyBlockH) / 2 - rubyLineH + rubyDownNudge;
 
     size_t ri = 0;
     while (ri < g.rubyText.size()) {

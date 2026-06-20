@@ -13,7 +13,7 @@
 
 namespace {
 
-constexpr uint8_t VSECTION_FILE_VERSION = 2;
+constexpr uint8_t VSECTION_FILE_VERSION = 32;
 constexpr size_t PARSE_BUFFER_SIZE = 1024;
 
 using RubyRun = VerticalParsedText::RubyRun;
@@ -278,6 +278,8 @@ bool VerticalSection::extractParagraphsAndLayout(const int fontId, const uint16_
   }
 
   VerticalParsedText layout(renderer, fontId, viewportWidth, viewportHeight);
+  const int lineH = renderer.getLineHeight(fontId);
+  layout.setColumnGapPx((lineH / 3) < 4 ? 4 : (lineH / 3));
   bool hasRuby = false;
   for (const auto& para : extractor.paragraphs) {
     for (const auto& run : para) {
@@ -286,7 +288,8 @@ bool VerticalSection::extractParagraphsAndLayout(const int fontId, const uint16_
     if (hasRuby) break;
   }
   if (hasRuby) {
-    layout.setColumnGapPx(renderer.getLineHeight(fontId) * 2 / 3);
+    layout.setColumnGapPx(lineH * 2 / 3);
+    layout.setRightPaddingPx((lineH / 2) < 2 ? 2 : (lineH / 2));
   }
   for (const auto& para : extractor.paragraphs) {
     layout.addAnnotatedParagraph(para);
@@ -326,9 +329,9 @@ bool VerticalSection::saveToCache(const int fontId, const uint16_t viewportWidth
       serialization::writePod(file, g.y);
       serialization::writePod(file, g.paragraphIndex);
       serialization::writePod(file, g.byteOffset);
-      serialization::writePod(file, g.rotated);
+      serialization::writePod(file, g.renderKind);
 
-      if (g.rotated) {
+      if (g.renderKind == VerticalGlyph::RotatedRun || g.renderKind == VerticalGlyph::UprightRun) {
         const auto runLen = static_cast<uint16_t>(g.rotatedRunText.size());
         serialization::writePod(file, runLen);
         if (runLen > 0) {
@@ -400,9 +403,9 @@ bool VerticalSection::loadFromCache(const int fontId, const uint16_t viewportWid
       serialization::readPod(file, g.y);
       serialization::readPod(file, g.paragraphIndex);
       serialization::readPod(file, g.byteOffset);
-      serialization::readPod(file, g.rotated);
+      serialization::readPod(file, g.renderKind);
 
-      if (g.rotated) {
+      if (g.renderKind == VerticalGlyph::RotatedRun || g.renderKind == VerticalGlyph::UprightRun) {
         uint16_t runLen;
         serialization::readPod(file, runLen);
         if (runLen > 0) {

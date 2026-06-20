@@ -40,6 +40,21 @@ uint32_t decodeUtf8At(const std::string& s, size_t i, size_t* bytesConsumed) {
   return c0;
 }
 
+std::string encodeCp(uint32_t cp) {
+  std::string out;
+  if (cp < 0x80) {
+    out.push_back(static_cast<char>(cp));
+  } else if (cp < 0x800) {
+    out.push_back(static_cast<char>(0xC0 | (cp >> 6)));
+    out.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
+  } else {
+    out.push_back(static_cast<char>(0xE0 | (cp >> 12)));
+    out.push_back(static_cast<char>(0x80 | ((cp >> 6) & 0x3F)));
+    out.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
+  }
+  return out;
+}
+
 // REGULAR isn't a symbol we've confirmed exists by name in
 // EpdFontFamily::Style for this checkout -- 0 is the bitwise-OR identity
 // element for the style flags (BOLD | ITALIC | UNDERLINE are documented as
@@ -47,6 +62,82 @@ uint32_t decodeUtf8At(const std::string& s, size_t i, size_t* bytesConsumed) {
 // "no styling" enumerator is actually called. Swap in the real symbol if
 // one exists, for readability.
 constexpr int kNoStyle = 0;
+
+uint32_t composeKanaDiacritic(uint32_t base, uint32_t mark) {
+  // U+3099 COMBINING KATAKANA-HIRAGANA VOICED SOUND MARK
+  if (mark == 0x3099) {
+    switch (base) {
+      case 0x3046: return 0x3094;  // う + ゙ = ゔ
+      case 0x304B: return 0x304C;  // か -> が
+      case 0x304D: return 0x304E;  // き -> ぎ
+      case 0x304F: return 0x3050;  // く -> ぐ
+      case 0x3051: return 0x3052;  // け -> げ
+      case 0x3053: return 0x3054;  // こ -> ご
+      case 0x3055: return 0x3056;  // さ -> ざ
+      case 0x3057: return 0x3058;  // し -> じ
+      case 0x3059: return 0x305A;  // す -> ず
+      case 0x305B: return 0x305C;  // せ -> ぜ
+      case 0x305D: return 0x305E;  // そ -> ぞ
+      case 0x305F: return 0x3060;  // た -> だ
+      case 0x3061: return 0x3062;  // ち -> ぢ
+      case 0x3064: return 0x3065;  // つ -> づ
+      case 0x3066: return 0x3067;  // て -> で
+      case 0x3068: return 0x3069;  // と -> ど
+      case 0x306F: return 0x3070;  // は -> ば
+      case 0x3072: return 0x3073;  // ひ -> び
+      case 0x3075: return 0x3076;  // ふ -> ぶ
+      case 0x3078: return 0x3079;  // へ -> べ
+      case 0x307B: return 0x307C;  // ほ -> ぼ
+      case 0x309D: return 0x309E;  // ゝ -> ゞ
+      case 0x30A6: return 0x30F4;  // ウ -> ヴ
+      case 0x30AB: return 0x30AC;  // カ -> ガ
+      case 0x30AD: return 0x30AE;  // キ -> ギ
+      case 0x30AF: return 0x30B0;  // ク -> グ
+      case 0x30B1: return 0x30B2;  // ケ -> ゲ
+      case 0x30B3: return 0x30B4;  // コ -> ゴ
+      case 0x30B5: return 0x30B6;  // サ -> ザ
+      case 0x30B7: return 0x30B8;  // シ -> ジ
+      case 0x30B9: return 0x30BA;  // ス -> ズ
+      case 0x30BB: return 0x30BC;  // セ -> ゼ
+      case 0x30BD: return 0x30BE;  // ソ -> ゾ
+      case 0x30BF: return 0x30C0;  // タ -> ダ
+      case 0x30C1: return 0x30C2;  // チ -> ヂ
+      case 0x30C4: return 0x30C5;  // ツ -> ヅ
+      case 0x30C6: return 0x30C7;  // テ -> デ
+      case 0x30C8: return 0x30C9;  // ト -> ド
+      case 0x30CF: return 0x30D0;  // ハ -> バ
+      case 0x30D2: return 0x30D3;  // ヒ -> ビ
+      case 0x30D5: return 0x30D6;  // フ -> ブ
+      case 0x30D8: return 0x30D9;  // ヘ -> ベ
+      case 0x30DB: return 0x30DC;  // ホ -> ボ
+      case 0x30EF: return 0x30F7;  // ワ -> ヷ
+      case 0x30F0: return 0x30F8;  // ヰ -> ヸ
+      case 0x30F1: return 0x30F9;  // ヱ -> ヹ
+      case 0x30F2: return 0x30FA;  // ヲ -> ヺ
+      case 0x30FD: return 0x30FE;  // ヽ -> ヾ
+      default: return 0;
+    }
+  }
+
+  // U+309A COMBINING KATAKANA-HIRAGANA SEMI-VOICED SOUND MARK
+  if (mark == 0x309A) {
+    switch (base) {
+      case 0x306F: return 0x3071;  // は -> ぱ
+      case 0x3072: return 0x3074;  // ひ -> ぴ
+      case 0x3075: return 0x3077;  // ふ -> ぷ
+      case 0x3078: return 0x307A;  // へ -> ぺ
+      case 0x307B: return 0x307D;  // ほ -> ぽ
+      case 0x30CF: return 0x30D1;  // ハ -> パ
+      case 0x30D2: return 0x30D4;  // ヒ -> ピ
+      case 0x30D5: return 0x30D7;  // フ -> プ
+      case 0x30D8: return 0x30DA;  // ヘ -> ペ
+      case 0x30DB: return 0x30DD;  // ホ -> ポ
+      default: return 0;
+    }
+  }
+
+  return 0;
+}
 
 } // namespace
 
@@ -70,9 +161,24 @@ void VerticalParsedText::addParagraph(const std::string& utf8Text) {
   while (i < utf8Text.size()) {
     size_t consumed = 1;
     const uint32_t cp = decodeUtf8At(utf8Text, i, &consumed);
-    // Skip raw newlines/tabs from source HTML -- paragraph breaks are
-    // already tracked structurally via addParagraph() calls. Note: a
-    // plain space is deliberately NOT skipped here even though CJK prose
+    if ((cp == 0x3099 || cp == 0x309A) && !stream_.empty() && stream_.back().paragraphIndex == paragraphIndex) {
+      const uint32_t composed = composeKanaDiacritic(stream_.back().codepoint, cp);
+      if (composed != 0) {
+        stream_.back().codepoint = composed;
+        i += consumed;
+        continue;
+      }
+    }
+    // Keep explicit source line breaks as hard vertical column breaks.
+    // Tabs are still ignored.
+    if (cp == '\n' || cp == '\r') {
+      if (paragraphBreaksBeforeIndex_.empty() || paragraphBreaksBeforeIndex_.back() != stream_.size()) {
+        paragraphBreaksBeforeIndex_.push_back(stream_.size());
+      }
+      i += consumed;
+      continue;
+    }
+    // Note: a plain space is deliberately NOT skipped here even though CJK prose
     // itself never uses inter-word spaces, because Kinsoku::
     // isRotatedRunCharacter() now treats ' ' as part of a Latin run --
     // dropping it here would merge multi-word embedded English phrases
@@ -80,7 +186,7 @@ void VerticalParsedText::addParagraph(const std::string& utf8Text) {
     // ("CrossPointReader"). A stray space between two CJK characters
     // (rare, but it happens in some EPUB markup) just renders as a
     // harmless near-invisible 1-character rotated "run".
-    if (cp == '\n' || cp == '\r' || cp == '\t') {
+    if (cp == '\t') {
       i += consumed;
       continue;
     }
@@ -99,12 +205,28 @@ void VerticalParsedText::addAnnotatedParagraph(const std::vector<RubyRun>& runs)
     // Decode base text into codepoints, then distribute ruby across them.
     std::vector<size_t> baseOffsets;
     std::vector<uint32_t> baseCps;
+    std::vector<size_t> breakBeforeBaseIndex;
     {
       size_t i = 0;
       while (i < run.baseText.size()) {
         size_t consumed = 1;
         const uint32_t cp = decodeUtf8At(run.baseText, i, &consumed);
-        if (cp == '\n' || cp == '\r' || cp == '\t') {
+        if ((cp == 0x3099 || cp == 0x309A) && !baseCps.empty()) {
+          const uint32_t composed = composeKanaDiacritic(baseCps.back(), cp);
+          if (composed != 0) {
+            baseCps.back() = composed;
+            i += consumed;
+            continue;
+          }
+        }
+        if (cp == '\n' || cp == '\r') {
+          if (breakBeforeBaseIndex.empty() || breakBeforeBaseIndex.back() != baseCps.size()) {
+            breakBeforeBaseIndex.push_back(baseCps.size());
+          }
+          i += consumed;
+          continue;
+        }
+        if (cp == '\t') {
           i += consumed;
           continue;
         }
@@ -115,6 +237,8 @@ void VerticalParsedText::addAnnotatedParagraph(const std::vector<RubyRun>& runs)
     }
 
     if (baseCps.empty()) continue;
+
+    const size_t runStartStreamIndex = stream_.size();
 
     if (run.rubyText.empty()) {
       for (size_t k = 0; k < baseCps.size(); k++) {
@@ -164,6 +288,13 @@ void VerticalParsedText::addAnnotatedParagraph(const std::vector<RubyRun>& runs)
                                        static_cast<uint32_t>(baseOffsets[k]), std::move(slice)});
       }
     }
+
+    for (size_t relIdx : breakBeforeBaseIndex) {
+      const size_t absBreakIdx = runStartStreamIndex + relIdx;
+      if (paragraphBreaksBeforeIndex_.empty() || paragraphBreaksBeforeIndex_.back() != absBreakIdx) {
+        paragraphBreaksBeforeIndex_.push_back(absBreakIdx);
+      }
+    }
   }
 }
 
@@ -173,9 +304,13 @@ std::vector<VerticalPage> VerticalParsedText::layoutPages() {
 
   const int cellPx = std::max(1, charAdvancePx());
   const int columnAdvancePx = cellPx + columnGapPx_;
-  const uint16_t rowsPerColumn = static_cast<uint16_t>(std::max(1, viewportHeight_ / cellPx));
-  const uint16_t columnsPerPage = static_cast<uint16_t>(std::max(1, viewportWidth_ / columnAdvancePx));
   const int ascender = renderer_.getFontAscenderSize(fontId_);
+  const int globalDownNudge = std::max(1, (cellPx * 3) / 8);
+  const int bottomReservedPx = std::max(cellPx * 2, ascender + globalDownNudge + cellPx);
+  const int usableHeightPx = std::max(cellPx, static_cast<int>(viewportHeight_) - bottomReservedPx);
+  const uint16_t rowsPerColumn = static_cast<uint16_t>(std::max(1, usableHeightPx / cellPx));
+  const int usableWidthPx = std::max(cellPx, static_cast<int>(viewportWidth_) - rightPaddingPx_);
+  const uint16_t columnsPerPage = static_cast<uint16_t>(std::max(1, usableWidthPx / columnAdvancePx));
 
   // Index into paragraphBreaksBeforeIndex_ of the *next* paragraph start,
   // so we know when we've crossed into a new paragraph and should force a
@@ -189,7 +324,7 @@ std::vector<VerticalPage> VerticalParsedText::layoutPages() {
   uint16_t column = 0;
   uint16_t row = 0;
 
-  auto columnLeftX = [&](uint16_t col) -> int { return viewportWidth_ - cellPx - col * columnAdvancePx; };
+  auto columnLeftX = [&](uint16_t col) -> int { return usableWidthPx - cellPx - col * columnAdvancePx; };
 
   auto finalizePageIfNeeded = [&]() {
     if (column >= columnsPerPage) {
@@ -202,18 +337,76 @@ std::vector<VerticalPage> VerticalParsedText::layoutPages() {
     }
   };
 
-  auto placeUpright = [&](const PendingChar& pc) {
+  auto placeUprightAt = [&](const PendingChar& pc, uint16_t col, uint16_t rowIdx) {
     VerticalGlyph g;
     g.codepoint = pc.codepoint;
-    g.column = column;
-    g.row = row;
-    g.x = static_cast<uint16_t>(columnLeftX(column));
-    g.y = static_cast<uint16_t>(row * cellPx + ascender);
+    g.column = col;
+    g.row = rowIdx;
     g.paragraphIndex = pc.paragraphIndex;
     g.byteOffset = pc.byteOffset;
-    g.rotated = false;
+
+    if (Kinsoku::needsVerticalRotation(pc.codepoint)) {
+      // Bracket / dash / chōonpu: keep one-cell layout, but mark as rotated
+      // punctuation so the renderer can center it by glyph metrics and apply
+      // opening/closing bracket flow-direction bias.
+      g.x = static_cast<uint16_t>(columnLeftX(col));
+      g.y = static_cast<uint16_t>(rowIdx * cellPx);
+      g.renderKind = VerticalGlyph::RotatedPunct;
+      g.rubyText = pc.rubyText;
+      page.glyphs.push_back(g);
+      return;
+    }
+
+    if (Kinsoku::isSmallKana(pc.codepoint)) {
+      // Keep small kana in normal row flow to avoid overlap with neighboring
+      // glyphs on fonts where "small" forms still have tall ink boxes.
+      // Apply only a light rightward bias inside the cell.
+      g.x = static_cast<uint16_t>(columnLeftX(col) + std::max(1, cellPx / 8));
+      g.y = static_cast<uint16_t>(rowIdx * cellPx + ascender - std::max(1, cellPx / 8));
+      g.renderKind = VerticalGlyph::Upright;
+      g.rubyText = pc.rubyText;
+      page.glyphs.push_back(g);
+      return;
+    }
+
+    int gx = columnLeftX(col);
+    int gy = rowIdx * cellPx + ascender;
+    if (pc.codepoint >= '0' && pc.codepoint <= '9') {
+      // Keep ASCII digits upright and centered in their tategaki cell.
+      int left = 0, width = 0, top = 0, height = 0;
+      if (renderer_.getGlyphMetrics(fontId_, pc.codepoint, static_cast<EpdFontFamily::Style>(kNoStyle), &left, &width,
+                                    &top, &height)) {
+        gx = columnLeftX(col) + (cellPx - width) / 2 - left - 1;
+      }
+    }
+    if (Kinsoku::verticalShiftType(pc.codepoint) == 1) {
+      // Comma/period: bottom-left → upper-right of the cell.
+      gx += cellPx / 2;
+      gy -= cellPx / 2;
+    }
+    g.x = static_cast<uint16_t>(gx);
+    g.y = static_cast<uint16_t>(gy);
+    g.renderKind = VerticalGlyph::Upright;
     g.rubyText = pc.rubyText;
     page.glyphs.push_back(g);
+  };
+
+  auto placeUpright = [&](const PendingChar& pc) { placeUprightAt(pc, column, row); };
+  auto isAsciiDigit = [](uint32_t cp) {
+    return (cp >= '0' && cp <= '9') ||              // ASCII digits: U+0030-U+0039
+           (cp >= 0xFF10 && cp <= 0xFF19);         // Fullwidth digits: U+FF10-U+FF19
+  };
+  auto encodeDigitUtf8 = [](uint32_t cp, std::string& out) {
+    if (cp < 0x80) {
+      out.push_back(static_cast<char>(cp));
+    } else if (cp < 0x800) {
+      out.push_back(static_cast<char>(0xC0 | (cp >> 6)));
+      out.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
+    } else if (cp < 0x10000) {
+      out.push_back(static_cast<char>(0xE0 | (cp >> 12)));
+      out.push_back(static_cast<char>(0x80 | ((cp >> 6) & 0x3F)));
+      out.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
+    }
   };
 
   size_t idx = 0;
@@ -223,9 +416,9 @@ std::vector<VerticalPage> VerticalParsedText::layoutPages() {
     // Force a fresh column at the start of every paragraph after the
     // first, the same way horizontal layout starts a new line per
     // paragraph.
-    if (nextParagraphBreakIdx < paragraphBreaksBeforeIndex_.size() &&
-        idx == paragraphBreaksBeforeIndex_[nextParagraphBreakIdx]) {
-      if (row != 0) {
+    while (nextParagraphBreakIdx < paragraphBreaksBeforeIndex_.size() &&
+           idx == paragraphBreaksBeforeIndex_[nextParagraphBreakIdx]) {
+      if (row != 0 || column == 0) {
         column++;
         row = 0;
         finalizePageIfNeeded();
@@ -233,13 +426,107 @@ std::vector<VerticalPage> VerticalParsedText::layoutPages() {
       nextParagraphBreakIdx++;
     }
 
+    const size_t boundaryLimit =
+        (nextParagraphBreakIdx < paragraphBreaksBeforeIndex_.size()) ? paragraphBreaksBeforeIndex_[nextParagraphBreakIdx]
+                                                                     : stream_.size();
+
+    if (isAsciiDigit(pc.codepoint)) {
+      size_t digitEnd = idx;
+      while (digitEnd < boundaryLimit && isAsciiDigit(stream_[digitEnd].codepoint)) {
+        digitEnd++;
+      }
+
+      const size_t digitCount = digitEnd - idx;
+      
+      if (digitCount == 2) {
+        std::string runUtf8;
+        encodeDigitUtf8(stream_[idx].codepoint, runUtf8);
+        encodeDigitUtf8(stream_[idx + 1].codepoint, runUtf8);
+        const int runWidthPx =
+            renderer_.getTextAdvanceX(fontId_, runUtf8.c_str(), static_cast<EpdFontFamily::Style>(kNoStyle));
+
+        VerticalGlyph g;
+        g.codepoint = 0;
+        g.column = column;
+        g.row = row;
+        g.x = static_cast<uint16_t>(columnLeftX(column) + std::max(0, (cellPx - runWidthPx) / 2));
+        g.y = static_cast<uint16_t>(row * cellPx + ascender);
+        g.paragraphIndex = pc.paragraphIndex;
+        g.byteOffset = pc.byteOffset;
+        g.renderKind = VerticalGlyph::UprightRun;
+        g.rotatedRunText = runUtf8;
+        page.glyphs.push_back(g);
+
+        row++;
+        if (row >= rowsPerColumn) {
+          column++;
+          row = 0;
+          finalizePageIfNeeded();
+        }
+        idx = digitEnd;
+        continue;
+      }
+
+      if (digitCount > 2) {
+        std::string runUtf8;
+        for (size_t i = idx; i < digitEnd; i++) {
+          encodeDigitUtf8(stream_[i].codepoint, runUtf8);
+        }
+
+        const int runWidthPx =
+            renderer_.getTextAdvanceX(fontId_, runUtf8.c_str(), static_cast<EpdFontFamily::Style>(kNoStyle));
+        const uint16_t rowsNeeded =
+            static_cast<uint16_t>(std::max(1, static_cast<int>(std::ceil(static_cast<double>(runWidthPx) / cellPx))));
+
+        if (row != 0 && row + rowsNeeded > rowsPerColumn) {
+          column++;
+          row = 0;
+          finalizePageIfNeeded();
+        }
+
+        const int topY = row * cellPx;
+        const int numericRotatedDownNudge = std::max(8, (cellPx * 9) / 10);
+        VerticalGlyph g;
+        g.codepoint = 0;
+        g.column = column;
+        g.row = row;
+        g.x = static_cast<uint16_t>(columnLeftX(column) + cellPx - ascender);
+        g.y = static_cast<uint16_t>(topY + numericRotatedDownNudge);
+        g.paragraphIndex = pc.paragraphIndex;
+        g.byteOffset = pc.byteOffset;
+        g.renderKind = VerticalGlyph::RotatedRun;
+        g.rotatedRunText = runUtf8;
+        page.glyphs.push_back(g);
+
+        row = static_cast<uint16_t>(row + rowsNeeded);
+        if (row >= rowsPerColumn) {
+          column++;
+          row = 0;
+          finalizePageIfNeeded();
+        }
+        idx = digitEnd;
+        continue;
+      }
+
+      // Single digit (digitCount == 1): place centered upright
+      placeUprightAt(pc, column, row);
+      row++;
+      if (row >= rowsPerColumn) {
+        column++;
+        row = 0;
+        finalizePageIfNeeded();
+      }
+      idx++;
+      continue;
+    }
+
     if (Kinsoku::isRotatedRunCharacter(pc.codepoint)) {
       // Gather the contiguous run of rotated-run characters (e.g. an
-      // English word or a number) so it's laid out, and later rendered,
+      // embedded English phrase) so it's laid out, and later rendered,
       // as a single sideways block instead of one cell per character.
       size_t runEnd = idx;
       std::string runUtf8;
-      while (runEnd < stream_.size() && Kinsoku::isRotatedRunCharacter(stream_[runEnd].codepoint) &&
+      while (runEnd < boundaryLimit && Kinsoku::isRotatedRunCharacter(stream_[runEnd].codepoint) &&
              stream_[runEnd].paragraphIndex == pc.paragraphIndex) {
         // Re-encode the codepoint back to UTF-8 for width measurement.
         // All rotated-run codepoints are ASCII by construction (see
@@ -256,7 +543,7 @@ std::vector<VerticalPage> VerticalParsedText::layoutPages() {
       // already has content, push the whole run to a fresh column rather
       // than splitting it mid-word. (If it doesn't fit even in an empty
       // column, let it render past the bottom edge -- a rare edge case for
-      // a very long unbroken run of Latin/digits; revisit if it comes up
+      // a very long unbroken Latin run; revisit if it comes up
       // in practice.)
       if (row != 0 && row + rowsNeeded > rowsPerColumn) {
         column++;
@@ -265,32 +552,16 @@ std::vector<VerticalPage> VerticalParsedText::layoutPages() {
       }
 
       const int topY = row * cellPx;
-      const int bottomY = topY + runWidthPx;
-      // Reversing the run before handing it to drawTextRotated90CW is
-      // required because that function advances *upward* (decreasing y)
-      // as it consumes the string -- see GfxRenderer's documented
-      // behaviour ("Cursor advances upward: yPos -= glyph->advanceX").
-      // Starting from bottomY with the reversed string makes the run's
-      // *first* character land at the top of its span and read downward
-      // in step with the rest of the column, matching standard tategaki
-      // convention for embedded Latin/number runs.
-      // NOTE: the exact pixel offsets here (topY/bottomY/columnLeftX
-      // alignment against ascender/descender) are derived from the
-      // formulas in GfxRenderer's docs but have not been visually
-      // verified on real glyph metrics -- expect to nudge this once you
-      // can see it on-device.
-      std::string reversedRun(runUtf8.rbegin(), runUtf8.rend());
-
       VerticalGlyph g;
-      g.codepoint = 0; // unused for rotated entries; see rotatedRunText
+      g.codepoint = 0;
       g.column = column;
       g.row = row;
-      g.x = static_cast<uint16_t>(columnLeftX(column));
-      g.y = static_cast<uint16_t>(bottomY);
+      g.x = static_cast<uint16_t>(columnLeftX(column) + cellPx - ascender);
+      g.y = static_cast<uint16_t>(topY);
       g.paragraphIndex = pc.paragraphIndex;
       g.byteOffset = pc.byteOffset;
-      g.rotated = true;
-      g.rotatedRunText = reversedRun;
+      g.renderKind = VerticalGlyph::RotatedRun;
+      g.rotatedRunText = runUtf8;
       page.glyphs.push_back(g);
 
       row = static_cast<uint16_t>(row + rowsNeeded);
@@ -312,18 +583,8 @@ std::vector<VerticalPage> VerticalParsedText::layoutPages() {
       // rowsPerColumn -- visually this means that column is very slightly
       // taller than its neighbours, which is the standard, accepted
       // trade-off real typesetting software makes for this rule.
-      VerticalGlyph& prev = page.glyphs.back();
-      VerticalGlyph g;
-      g.codepoint = pc.codepoint;
-      g.column = prev.column;
-      g.row = static_cast<uint16_t>(prev.row + 1);
-      g.x = static_cast<uint16_t>(columnLeftX(prev.column));
-      g.y = static_cast<uint16_t>(g.row * cellPx + ascender);
-      g.paragraphIndex = pc.paragraphIndex;
-      g.byteOffset = pc.byteOffset;
-      g.rotated = false;
-      g.rubyText = pc.rubyText;
-      page.glyphs.push_back(g);
+      const VerticalGlyph& prev = page.glyphs.back();
+      placeUprightAt(pc, prev.column, static_cast<uint16_t>(prev.row + 1));
       idx++;
       continue;
     }
