@@ -430,7 +430,7 @@ void EpubReaderActivity::loop() {
   }
 
   // No current section, attempt to rerender the book
-  if (!section) {
+  if (!section && !verticalSection) {
     requestUpdate();
     return;
   }
