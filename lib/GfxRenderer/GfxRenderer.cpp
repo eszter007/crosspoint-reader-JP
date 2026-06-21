@@ -1700,7 +1700,7 @@ void GfxRenderer::drawCharVerticalRotatedInCell(const int fontId, const int cell
     const int dotSize = std::max(1, cellSize / 10);
     const int gap = std::max(1, cellSize / 10);
     const int totalH = dotCount * dotSize + (dotCount - 1) * gap;
-    int startY = cellTopY + std::max(1, cellSize / 3);
+    int startY = cellTopY + std::max(1, cellSize / 3) + cellSize / 3;
     const int maxStartY = cellTopY + std::max(1, cellSize - totalH - 1);
     if (startY > maxStartY) startY = maxStartY;
     const int startX = cellLeftX + (cellSize - dotSize) / 2;
@@ -1725,41 +1725,33 @@ void GfxRenderer::drawCharVerticalRotatedInCell(const int fontId, const int cell
   const int rotatedH = glyph->width;
 
   int drawX = cellLeftX + (cellSize - rotatedW) / 2;
-  int drawY = cellTopY + (cellSize - rotatedH) / 2;
+  int drawY = cellTopY + (cellSize - rotatedH) / 2 + cellSize / 3;
 
   // In vertical Japanese, opening/closing brackets sit closer to enclosed text.
   // We bias only on Y (flow direction) to tighten spacing without horizontal drift.
   const int openingBias = std::max(1, (cellSize * 2) / 3);
   const int closingBias = std::max(1, cellSize / 6);
   if (shiftType == 2) {          // closing bracket/quote
-    // Closing bracket should hug the left edge and sit slightly lower to avoid overlap.
-    drawX = cellLeftX - std::max(1, cellSize / 5);
+    const bool isSquareBracket = (cp == 0x300D || cp == 0x300F || cp == 0x3009 || cp == 0x300B ||
+                                  cp == 0x3011 || cp == 0x3015);
+    if (isSquareBracket) {
+      drawX = cellLeftX + (cellSize - rotatedW) / 2 - cellSize / 3;
+    }
     drawY = cellTopY + cellSize - rotatedH + closingBias;
   } else if (shiftType == 3) {   // opening bracket/quote
-    // Opening bracket should hug the right edge and sit lower in tategaki.
-    drawX = cellLeftX + cellSize - rotatedW + std::max(1, cellSize / 5);
-    drawY = cellTopY + cellSize - rotatedH + openingBias;
+    drawY = cellTopY + cellSize + cellSize * 2 / 3;
   }
 
   int minX = cellLeftX;
   int maxX = cellLeftX + cellSize - rotatedW;
   int minY = cellTopY;
-  int maxY = cellTopY + cellSize - rotatedH;
-  if (shiftType == 2 || shiftType == 3) {
-    // Japanese opening/closing quote/bracket glyphs often need overhang to
-    // look naturally attached to the enclosed text.
-    minY -= cellSize / 2;
-    maxY += cellSize / 2;
-  }
+  int maxY = cellTopY + cellSize * 2;
   if (shiftType == 2) {
-    // Allow left overhang for stronger attachment feel on closing brackets.
     minX -= std::max(1, cellSize / 3);
+    minY -= cellSize / 2;
   }
   if (shiftType == 3) {
-    // Opening brackets often need additional right/down overhang to avoid
-    // appearing detached from the enclosed text.
     maxX += std::max(1, cellSize / 3);
-    maxY += std::max(1, cellSize / 2);
   }
   drawX = std::clamp(drawX, minX, maxX);
   drawY = std::clamp(drawY, minY, maxY);

@@ -351,12 +351,6 @@ int CrossPointSettings::getReaderFontId() const {
     if (id != 0) return id;
   }
 
-  // In vertical text mode, try UDDigiKyokasho if installed on SD card
-  if (verticalTextMode && sdFontIdResolver) {
-    int id = sdFontIdResolver(sdFontResolverCtx, "UDDigiKyokasho", fontSize);
-    if (id != 0) return id;
-  }
-
   switch (fontFamily) {
     case NOTOSERIF:
     default:
@@ -389,11 +383,6 @@ int CrossPointSettings::getReaderFontId() const {
 int CrossPointSettings::getRubyFontId() const {
   if (sdFontFamilyName[0] != '\0' && sdFontIdResolver) {
     int id = sdFontIdResolver(sdFontResolverCtx, sdFontFamilyName, SMALL);
-    if (id != 0) return id;
-  }
-
-  if (verticalTextMode && sdFontIdResolver) {
-    int id = sdFontIdResolver(sdFontResolverCtx, "UDDigiKyokasho", SMALL);
     if (id != 0) return id;
   }
 

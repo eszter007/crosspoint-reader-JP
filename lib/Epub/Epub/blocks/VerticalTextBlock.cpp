@@ -26,8 +26,15 @@ void encodeCodepoint(uint32_t cp, std::string& out) {
   }
 }
 
+int computeCellPx(GfxRenderer& renderer, int fontId) {
+  const int cjkAdvance = renderer.getTextAdvanceX(
+      fontId, "\xe6\xbc\xa2", static_cast<EpdFontFamily::Style>(0));
+  if (cjkAdvance > 0) return cjkAdvance + cjkAdvance / 6;
+  return renderer.getLineHeight(fontId);
+}
+
 void drawGlyphs(GfxRenderer& renderer, const VerticalPage& page, int fontId, int offsetX, int offsetY, bool black) {
-  const int cellPx = renderer.getLineHeight(fontId);
+  const int cellPx = computeCellPx(renderer, fontId);
   const int globalDownNudge = std::max(1, (cellPx * 3) / 8);
   for (const VerticalGlyph& g : page.glyphs) {
     const int dx = g.x + offsetX;
@@ -62,7 +69,23 @@ void drawGlyphs(GfxRenderer& renderer, const VerticalPage& page, int fontId, int
 
     std::string utf8Char;
     encodeCodepoint(g.codepoint, utf8Char);
-    renderer.drawText(fontId, dx, dy, utf8Char.c_str(), black, static_cast<EpdFontFamily::Style>(kNoStyle));
+    // For thin glyphs like 一 (height << ascender), the uniform nudge
+    // over-shifts them because their ink sits near the em-box center, not
+    // the top. Pull them back by the difference between their top and a
+    // full glyph's top so the ink stays visually centered in the column.
+    int uprightDy = dy;
+    {
+      int gl = 0, gw = 0, gt = 0, gh = 0;
+      if (renderer.getGlyphMetrics(fontId, g.codepoint, static_cast<EpdFontFamily::Style>(kNoStyle), &gl, &gw, &gt,
+                                   &gh) && gh > 0 && gh < gt) {
+        // Thin glyph (一): ink sits near the middle of the em-box, not the
+        // top. Remove the uniform nudge and instead position so the ink's
+        // vertical center aligns with the cell's vertical center.
+        // ink center = cursorY - top + height/2; cell center ≈ g.y + offsetY
+        uprightDy = g.y + offsetY + gt - gh / 2;
+      }
+    }
+    renderer.drawText(fontId, dx, uprightDy, utf8Char.c_str(), black, static_cast<EpdFontFamily::Style>(kNoStyle));
   }
 }
 
@@ -81,12 +104,16 @@ void VerticalTextBlock::render(GfxRenderer& renderer, int fontId, int rubyFontId
   const int baseLineH = renderer.getLineHeight(fontId);
   const auto rubyStyle = static_cast<EpdFontFamily::Style>(EpdFontFamily::SUP);
 
+  const int cellPxLocal = computeCellPx(renderer, fontId);
+  int prevRubyBottom = -9999;
+  uint16_t prevRubyColumn = UINT16_MAX;
+
   for (const VerticalGlyph& g : page_.glyphs) {
     if (g.rubyText.empty() || g.renderKind == VerticalGlyph::RotatedRun || g.renderKind == VerticalGlyph::UprightRun) {
       continue;
     }
 
-    const int rubyX = g.x + offsetX + baseLineH + 1;
+    const int rubyX = g.x + offsetX + cellPxLocal - cellPxLocal / 8;
 
     size_t rubyCharCount = 0;
     {
@@ -104,6 +131,13 @@ void VerticalTextBlock::render(GfxRenderer& renderer, int fontId, int rubyFontId
     const int rubyBlockH = static_cast<int>(rubyCharCount) * rubyLineH;
     const int rubyDownNudge = std::max(3, (rubyLineH * 4) / 5);
     int rubyY = g.y + offsetY + (baseLineH - rubyBlockH) / 2 - rubyLineH + rubyDownNudge;
+
+    if (g.column == prevRubyColumn && rubyY < prevRubyBottom + 1) {
+      rubyY = prevRubyBottom + 1;
+    }
+
+    prevRubyBottom = rubyY + rubyBlockH;
+    prevRubyColumn = g.column;
 
     size_t ri = 0;
     while (ri < g.rubyText.size()) {

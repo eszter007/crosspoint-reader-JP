@@ -146,10 +146,13 @@ VerticalParsedText::VerticalParsedText(const GfxRenderer& renderer, int fontId, 
     : renderer_(renderer), fontId_(fontId), viewportWidth_(viewportWidth), viewportHeight_(viewportHeight) {}
 
 int VerticalParsedText::charAdvancePx() const {
-  // getLineHeight() returns the font's advanceY, which is the right metric
-  // for "how far apart are two stacked characters" -- CJK fonts are
-  // designed so this is approximately equal to the character's em-square,
-  // which is exactly the cell size tategaki layout wants.
+  // Measure the advance width of a reference CJK character to get the
+  // true em-square size. For CJK fonts this matches advanceY; for
+  // Latin-oriented fonts (NotoSerif) where advanceY includes extra
+  // interline spacing, this gives the correct tighter cell size.
+  const int cjkAdvance = renderer_.getTextAdvanceX(
+      fontId_, "\xe6\xbc\xa2", static_cast<EpdFontFamily::Style>(0));  // 漢
+  if (cjkAdvance > 0) return cjkAdvance + cjkAdvance / 6;
   return renderer_.getLineHeight(fontId_);
 }
 
@@ -372,7 +375,6 @@ std::vector<VerticalPage> VerticalParsedText::layoutPages() {
     int gx = columnLeftX(col);
     int gy = rowIdx * cellPx + ascender;
     if (pc.codepoint >= '0' && pc.codepoint <= '9') {
-      // Keep ASCII digits upright and centered in their tategaki cell.
       int left = 0, width = 0, top = 0, height = 0;
       if (renderer_.getGlyphMetrics(fontId_, pc.codepoint, static_cast<EpdFontFamily::Style>(kNoStyle), &left, &width,
                                     &top, &height)) {
@@ -645,17 +647,44 @@ std::vector<VerticalPage> VerticalParsedText::layoutPages() {
 
     // Single upright CJK/kana/punctuation character.
     bool startingNewColumn = (row == 0);
-    if (startingNewColumn && Kinsoku::isLineStartProhibited(pc.codepoint) && !page.glyphs.empty()) {
-      // Oikomi (追い込み): pull this character back into the previous
-      // column as an extra row, rather than letting it start a new one.
-      // We allow the previous column to grow by one cell beyond
-      // rowsPerColumn -- visually this means that column is very slightly
-      // taller than its neighbours, which is the standard, accepted
-      // trade-off real typesetting software makes for this rule.
-      const VerticalGlyph& prev = page.glyphs.back();
-      placeUprightAt(pc, prev.column, static_cast<uint16_t>(prev.row + 1));
-      idx++;
-      continue;
+    if (startingNewColumn && Kinsoku::isLineStartProhibited(pc.codepoint)) {
+      if (!page.glyphs.empty()) {
+        // Oikomi (追い込み): pull this character back into the previous
+        // column as an extra row.
+        const VerticalGlyph& prev = page.glyphs.back();
+        placeUprightAt(pc, prev.column, static_cast<uint16_t>(prev.row + 1));
+        idx++;
+        continue;
+      } else if (!pages.empty()) {
+        // Page just broke — pull back to the last column of the previous page.
+        VerticalPage& prevPage = pages.back();
+        if (!prevPage.glyphs.empty()) {
+          const VerticalGlyph& prev = prevPage.glyphs.back();
+          VerticalGlyph g;
+          g.codepoint = pc.codepoint;
+          g.column = prev.column;
+          g.row = static_cast<uint16_t>(prev.row + 1);
+          int gx = columnLeftX(prev.column);
+          int gy = g.row * cellPx + ascender;
+          if (Kinsoku::verticalShiftType(pc.codepoint) == 1) {
+            gx += cellPx / 2;
+            gy -= cellPx / 2;
+          }
+          g.x = static_cast<uint16_t>(gx);
+          g.y = static_cast<uint16_t>(gy);
+          g.renderKind = VerticalGlyph::Upright;
+          if (Kinsoku::needsVerticalRotation(pc.codepoint)) {
+            g.x = static_cast<uint16_t>(columnLeftX(prev.column) + cellPx - ascender);
+            g.y = static_cast<uint16_t>(g.row * cellPx);
+            g.renderKind = VerticalGlyph::RotatedPunct;
+          }
+          g.paragraphIndex = pc.paragraphIndex;
+          g.byteOffset = pc.byteOffset;
+          prevPage.glyphs.push_back(g);
+          idx++;
+          continue;
+        }
+      }
     }
 
     bool endingColumn = (row == rowsPerColumn - 1);
