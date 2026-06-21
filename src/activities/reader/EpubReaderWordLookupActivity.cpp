@@ -6,23 +6,62 @@
 #include <WordLookup.h>
 
 #include "CrossPointSettings.h"
+#include "Epub/Kinsoku.h"
 #include "MappedInputManager.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
 
 namespace {
 constexpr int kMaxLookupChars = 8;
+
+bool isLookupableChar(uint32_t cp) {
+  if (cp < 0x30) return false;
+  if (Kinsoku::needsVerticalRotation(cp)) return false;
+  if (Kinsoku::verticalShiftType(cp) != 0) return false;
+  if (Kinsoku::isSmallKana(cp)) return false;
+  if (cp == 0xFE45 || cp == 0xFE46) return false;
+  if (cp == 0x30FC) return false;
+  if (cp == 0x30FB) return false;
+  if (cp == 0x2026 || cp == 0x2025) return false;
+  if (cp >= 0x3040 && cp <= 0x309F) return true;  // Hiragana
+  if (cp >= 0x30A0 && cp <= 0x30FF) return true;  // Katakana
+  if (cp >= 0x4E00 && cp <= 0x9FFF) return true;  // CJK Unified
+  if (cp >= 0x3400 && cp <= 0x4DBF) return true;  // CJK Ext A
+  if (cp >= 0xF900 && cp <= 0xFAFF) return true;  // CJK Compat
+  return cp >= 0x80;
+}
+
+bool isKatakana(uint32_t cp) {
+  return (cp >= 0x30A0 && cp <= 0x30FF) || cp == 0x30FC ||
+         (Kinsoku::isSmallKana(cp) && cp >= 0x30A0);
+}
+
+bool isHiragana(uint32_t cp) {
+  return (cp >= 0x3040 && cp <= 0x309F) ||
+         (Kinsoku::isSmallKana(cp) && cp < 0x30A0);
+}
+
+bool isCJK(uint32_t cp) {
+  return (cp >= 0x4E00 && cp <= 0x9FFF) || (cp >= 0x3400 && cp <= 0x4DBF) ||
+         (cp >= 0xF900 && cp <= 0xFAFF);
+}
 }
 
 EpubReaderWordLookupActivity::EpubReaderWordLookupActivity(GfxRenderer& renderer, MappedInputManager& mappedInput,
                                                             const VerticalPage& page)
     : Activity("WordLookup", renderer, mappedInput) {
+  allGlyphs.reserve(page.glyphs.size());
   selectableGlyphs.reserve(page.glyphs.size());
   for (const auto& g : page.glyphs) {
-    const bool isRotated = (g.renderKind == VerticalGlyph::RotatedRun);
-    if (isRotated) continue;
-    selectableGlyphs.push_back(
-        GlyphRef{g.x, g.y, g.column, g.row, g.codepoint, g.paragraphIndex, isRotated});
+    if (g.renderKind == VerticalGlyph::RotatedRun) continue;
+    // Include all single characters (even rotated punct like ー) in allGlyphs
+    // for lookup text building, but only lookupable chars in selectableGlyphs.
+    GlyphRef ref{g.x, g.y, g.column, g.row, g.codepoint, g.paragraphIndex, false};
+    allGlyphs.push_back(ref);
+    if (isLookupableChar(g.codepoint)) {
+      selectToAllIdx.push_back(allGlyphs.size() - 1);
+      selectableGlyphs.push_back(ref);
+    }
   }
 }
 
@@ -36,7 +75,12 @@ void EpubReaderWordLookupActivity::onExit() { Activity::onExit(); }
 void EpubReaderWordLookupActivity::moveCursor(int delta) {
   if (selectableGlyphs.empty()) return;
   int prev = cursorIndex;
-  cursorIndex += delta;
+  // When moving forward and we have a match, jump past the matched word
+  if (delta > 0 && hasResult && resultMatchLen > 1) {
+    cursorIndex += resultMatchLen;
+  } else {
+    cursorIndex += delta;
+  }
   if (cursorIndex < 0) cursorIndex = 0;
   if (cursorIndex >= static_cast<int>(selectableGlyphs.size())) {
     cursorIndex = static_cast<int>(selectableGlyphs.size()) - 1;
@@ -65,13 +109,14 @@ void EpubReaderWordLookupActivity::encodeUtf8(uint32_t cp, std::string& out) {
 
 std::string EpubReaderWordLookupActivity::buildLookupText(size_t startIdx) const {
   std::string text;
-  if (startIdx >= selectableGlyphs.size()) return text;
+  if (startIdx >= selectableGlyphs.size() || startIdx >= selectToAllIdx.size()) return text;
 
-  const uint32_t paraIdx = selectableGlyphs[startIdx].paragraphIndex;
+  const size_t allStart = selectToAllIdx[startIdx];
+  const uint32_t paraIdx = allGlyphs[allStart].paragraphIndex;
   int charCount = 0;
 
-  for (size_t i = startIdx; i < selectableGlyphs.size() && charCount < kMaxLookupChars; i++) {
-    const auto& g = selectableGlyphs[i];
+  for (size_t i = allStart; i < allGlyphs.size() && charCount < kMaxLookupChars; i++) {
+    const auto& g = allGlyphs[i];
     if (g.paragraphIndex != paraIdx) break;
     encodeUtf8(g.codepoint, text);
     charCount++;
@@ -138,14 +183,86 @@ void EpubReaderWordLookupActivity::renderContentArea(const Rect& screen, int con
 
     int defY = headY + renderer.getLineHeight(jaFont) + metrics.verticalSpacing;
 
-    auto lines = renderer.wrappedText(jaFont, resultDefinition.c_str(), maxWidth, 8);
-    for (const auto& line : lines) {
-      renderer.drawText(jaFont, textX, defY, line.c_str(), true);
-      defY += renderer.getLineHeight(jaFont);
+    const int defFont = SMALL_FONT_ID;
+    const int defLineH = renderer.getLineHeight(defFont);
+    // Split on newlines first, then wrap each line individually
+    int linesDrawn = 0;
+    constexpr int kMaxDefLines = 20;
+    std::string defText = resultDefinition;
+    size_t nlPos = 0;
+    while (nlPos <= defText.size() && linesDrawn < kMaxDefLines) {
+      size_t nextNl = defText.find('\n', nlPos);
+      std::string paragraph = (nextNl == std::string::npos)
+          ? defText.substr(nlPos) : defText.substr(nlPos, nextNl - nlPos);
+      nlPos = (nextNl == std::string::npos) ? defText.size() + 1 : nextNl + 1;
+
+      if (paragraph.empty()) {
+        defY += defLineH / 2;
+        continue;
+      }
+      // Try space-based wrapping first (for Latin text), then fall back to
+      // character-level wrapping (for CJK text without spaces).
+      std::string rem = paragraph;
+      while (!rem.empty() && linesDrawn < kMaxDefLines) {
+        if (renderer.getTextWidth(defFont, rem.c_str()) <= maxWidth) {
+          renderer.drawText(defFont, textX, defY, rem.c_str(), true);
+          defY += defLineH;
+          linesDrawn++;
+          break;
+        }
+        // Try to break at the last space that fits
+        std::string bestLine;
+        size_t lastSpaceBreak = std::string::npos;
+        std::string accum;
+        const char* p = rem.c_str();
+        while (*p) {
+          size_t charLen = 1;
+          auto c0 = static_cast<unsigned char>(*p);
+          if (c0 >= 0xF0) charLen = 4;
+          else if (c0 >= 0xE0) charLen = 3;
+          else if (c0 >= 0xC0) charLen = 2;
+          std::string test = accum + std::string(p, charLen);
+          if (renderer.getTextWidth(defFont, test.c_str()) > maxWidth) {
+            // Never orphan sentence-ending punctuation on its own line
+            uint32_t nextCp = 0;
+            if (charLen == 3) nextCp = ((c0 & 0x0F) << 12) | ((static_cast<unsigned char>(p[1]) & 0x3F) << 6) | (static_cast<unsigned char>(p[2]) & 0x3F);
+            else if (charLen == 1) nextCp = c0;
+            if (nextCp == 0x3002 || nextCp == 0x3001 || nextCp == 0xFF01 || nextCp == 0xFF1F ||
+                nextCp == '.' || nextCp == ',' || nextCp == '!' || nextCp == '?') {
+              accum = test;
+              p += charLen;
+            }
+            break;
+          }
+          accum = test;
+          if (*p == ' ') lastSpaceBreak = accum.size();
+          p += charLen;
+        }
+        if (accum.empty()) {
+          // Single char wider than maxWidth — force it
+          auto c0 = static_cast<unsigned char>(rem[0]);
+          size_t cl = 1;
+          if (c0 >= 0xF0) cl = 4; else if (c0 >= 0xE0) cl = 3; else if (c0 >= 0xC0) cl = 2;
+          accum = rem.substr(0, cl);
+          rem = rem.substr(cl);
+        } else if (lastSpaceBreak != std::string::npos && lastSpaceBreak > 0) {
+          // Break at last space to keep Latin words intact
+          std::string line = accum.substr(0, lastSpaceBreak);
+          rem = rem.substr(lastSpaceBreak);
+          // Skip leading space
+          if (!rem.empty() && rem[0] == ' ') rem = rem.substr(1);
+          accum = line;
+        } else {
+          // No space found — break at character boundary (CJK text)
+          rem = rem.substr(accum.size());
+        }
+        renderer.drawText(defFont, textX, defY, accum.c_str(), true);
+        defY += defLineH;
+        linesDrawn++;
+      }
     }
 
-    defY += metrics.verticalSpacing;
-    renderer.drawText(SMALL_FONT_ID, textX, defY, tr(STR_DICT_CREDIT), true);
+    // Attribution is shown in the header instead
   } else {
     std::string preview;
     encodeUtf8(selectableGlyphs[cursorIndex].codepoint, preview);

@@ -206,7 +206,8 @@ def convert_jmdict(json_path: str, output_dir: str):
 
 
 def flatten_structured_content(content) -> str:
-    """Recursively extract plain text from Yomitan structured content."""
+    """Recursively extract display text from Yomitan structured content,
+    using the semantic data-content attributes from Jitendex."""
     if isinstance(content, str):
         return content
     if isinstance(content, list):
@@ -219,25 +220,94 @@ def flatten_structured_content(content) -> str:
             return ""
         if ctype == "structured-content":
             return flatten_structured_content(content.get("content", ""))
+
         inner = content.get("content", "")
         tag = content.get("tag", "")
+        data = content.get("data", {}) if isinstance(content.get("data"), dict) else {}
+        dc = data.get("content", "")
+        cls = data.get("class", "")
         text = flatten_structured_content(inner)
+
         if tag == "br":
             return "\n"
-        if tag in ("li",):
+        if tag == "rt":
+            return ""
+        if tag == "ruby":
+            return text
+
+        # All tag-class spans → [noun] [math] [colloquial] etc. inline
+        if cls == "tag" and dc in ("part-of-speech-info", "field-info", "misc-info",
+                                   "dialect-info", "language-info"):
+            return "[" + text + "] "
+        if cls == "tag" and dc == "forms-label":
+            return ""
+
+        # Glossary list items — newline before to separate from POS tags
+        if dc == "glossary" and tag == "ul":
+            return "\n" + text
+        if tag == "li" and not dc:
+            return "• " + text.strip() + "\n"
+
+        # Sense groups
+        if dc == "sense-group" and tag in ("li", "div"):
             return text + "\n"
+        if dc == "sense" and tag == "li":
+            return text
+
+        # Notes — indented with arrow
+        if dc == "sense-note-label":
+            return text + ": "
+        if dc == "sense-note-content":
+            return text + "\n"
+        if dc == "sense-note" and cls == "extra-box":
+            return "  → " + text
+
+        # Example sentences — each part on its own line, indented
+        if dc == "example-sentence-a":
+            return text + "\n"
+        if dc == "example-sentence-b":
+            return text + "\n"
+        if dc == "example-sentence" and cls == "extra-box":
+            return "  " + text
+        if dc == "example-keyword":
+            return text
+
+        # Cross-references
+        if dc == "xref" and cls == "extra-box":
+            return ""
+        if dc == "reference-label":
+            return text + " "
+
+        # Other forms — skip to save space
+        if dc == "forms":
+            return ""
+
+        # Attribution
+        if dc == "attribution-footnote":
+            return ""
+
+        # Generic block elements
+        if tag in ("div", "p", "blockquote", "section"):
+            if dc == "extra-info":
+                return text
+            return text
+        if tag in ("ol", "ul"):
+            return text
+
         return text
     return str(content)
 
 
-def format_definition_yomitan(reading: str, definitions) -> str:
+def format_definition_yomitan(headword: str, reading: str, definitions) -> str:
     """Format a Yomitan entry's reading + definitions into display string."""
     parts = []
-    if reading:
+    # Only show reading if it differs from headword (skip for kana-only entries)
+    if reading and reading != headword:
         parts.append(f"【{reading}】")
 
     if isinstance(definitions, list):
-        for i, defn in enumerate(definitions[:5]):
+        non_empty = []
+        for defn in definitions[:6]:
             if isinstance(defn, str):
                 text = defn
             elif isinstance(defn, dict):
@@ -245,12 +315,20 @@ def format_definition_yomitan(reading: str, definitions) -> str:
             else:
                 text = str(defn)
             text = text.strip()
-            if not text:
-                continue
-            prefix = f"{i+1}. " if len(definitions) > 1 else ""
-            parts.append(prefix + text)
+            if text:
+                non_empty.append(text)
 
-    return "\n".join(parts)
+        for i, text in enumerate(non_empty):
+            if len(non_empty) > 1:
+                parts.append(f"\n{i+1}. {text}")
+            else:
+                parts.append(f"\n{text}")
+
+    result = "\n".join(parts)
+    result = re.sub(r'[ \t]+', ' ', result)
+    result = re.sub(r'\n{3,}', '\n\n', result)
+    result = re.sub(r'• • ', '• ', result)
+    return result.strip()
 
 
 def convert_yomitan(zip_path: str, output_dir: str):
@@ -294,7 +372,7 @@ def convert_yomitan(zip_path: str, output_dir: str):
                 if not headword or not isinstance(headword, str):
                     continue
 
-                definition = format_definition_yomitan(reading, definitions)
+                definition = format_definition_yomitan(headword, reading, definitions)
                 if not definition:
                     continue
 
@@ -310,7 +388,10 @@ def convert_yomitan(zip_path: str, output_dir: str):
                 if reading and reading != headword:
                     r_bytes = reading.encode("utf-8")
                     if len(r_bytes) < HEADWORD_SIZE and r_bytes not in seen_headwords:
-                        records.append((r_bytes, def_bytes, priority))
+                        # Format with reading as headword so 【reading】 is hidden
+                        r_def = format_definition_yomitan(reading, reading, definitions)
+                        if r_def:
+                            records.append((r_bytes, r_def.encode("utf-8"), priority))
 
                 entry_count += 1
 

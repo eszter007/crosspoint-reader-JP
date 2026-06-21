@@ -33,6 +33,8 @@ class EpubReaderWordLookupActivity final : public Activity {
   };
 
   std::vector<GlyphRef> selectableGlyphs;
+  std::vector<GlyphRef> allGlyphs;  // Full glyph list for building lookup text
+  std::vector<size_t> selectToAllIdx;  // Maps selectableGlyphs index → allGlyphs index
   int cursorIndex = 0;
 
   bool hasResult = false;
