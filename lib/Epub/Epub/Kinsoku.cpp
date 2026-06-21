@@ -142,7 +142,7 @@ bool isRotatedRunCharacter(uint32_t codepoint) {
   // matching standard tategaki convention.
   if (codepoint >= 'A' && codepoint <= 'Z') return true;
   if (codepoint >= 'a' && codepoint <= 'z') return true;
-  if (codepoint == ' ') return true; // preserve spacing inside embedded Latin phrases/numbers
+  if (codepoint == ' ') return true;
   switch (codepoint) {
     case '.':
     case ',':
@@ -153,6 +153,18 @@ bool isRotatedRunCharacter(uint32_t codepoint) {
     case '+':
     case '#':
     case '@':
+    case '&':
+    case '\'':
+    case '"':
+    case '(':
+    case ')':
+    case '*':
+    case '!':
+    case '?':
+    case ';':
+    case 0x00A9: // ©
+    case 0x00AE: // ®
+    case 0x2122: // ™
       return true;
     default:
       return false;

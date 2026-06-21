@@ -528,48 +528,117 @@ std::vector<VerticalPage> VerticalParsedText::layoutPages() {
       std::string runUtf8;
       while (runEnd < boundaryLimit && Kinsoku::isRotatedRunCharacter(stream_[runEnd].codepoint) &&
              stream_[runEnd].paragraphIndex == pc.paragraphIndex) {
-        // Re-encode the codepoint back to UTF-8 for width measurement.
-        // All rotated-run codepoints are ASCII by construction (see
-        // Kinsoku::isRotatedRunCharacter), so this is a single byte.
-        runUtf8.push_back(static_cast<char>(stream_[runEnd].codepoint));
+        runUtf8 += encodeCp(stream_[runEnd].codepoint);
         runEnd++;
-        if (runEnd - idx > 64) break; // sanity cap on a single run
+        if (runEnd - idx > 64) break;
       }
 
-      const int runWidthPx = renderer_.getTextAdvanceX(fontId_, runUtf8.c_str(), static_cast<EpdFontFamily::Style>(kNoStyle));
-      const uint16_t rowsNeeded = static_cast<uint16_t>(std::max(1, static_cast<int>(std::ceil(static_cast<double>(runWidthPx) / cellPx))));
+      // Split the run into chunks that fit in columns, breaking at spaces.
+      const int maxColumnPx = rowsPerColumn * cellPx;
+      std::string remaining = runUtf8;
 
-      // If the run doesn't fit in the remaining space of a column that
-      // already has content, push the whole run to a fresh column rather
-      // than splitting it mid-word. (If it doesn't fit even in an empty
-      // column, let it render past the bottom edge -- a rare edge case for
-      // a very long unbroken Latin run; revisit if it comes up
-      // in practice.)
-      if (row != 0 && row + rowsNeeded > rowsPerColumn) {
-        column++;
-        row = 0;
-        finalizePageIfNeeded();
+      while (!remaining.empty()) {
+        const int remWidthPx = renderer_.getTextAdvanceX(fontId_, remaining.c_str(), static_cast<EpdFontFamily::Style>(kNoStyle));
+        const uint16_t remRows = static_cast<uint16_t>(std::max(1, static_cast<int>(std::ceil(static_cast<double>(remWidthPx) / cellPx))));
+        const uint16_t availRows = rowsPerColumn - row;
+
+        if (remRows <= availRows) {
+          // Fits in the current column.
+          const int topY = row * cellPx;
+          VerticalGlyph g;
+          g.codepoint = 0;
+          g.column = column;
+          g.row = row;
+          g.x = static_cast<uint16_t>(columnLeftX(column) + cellPx - ascender);
+          g.y = static_cast<uint16_t>(topY);
+          g.paragraphIndex = pc.paragraphIndex;
+          g.byteOffset = pc.byteOffset;
+          g.renderKind = VerticalGlyph::RotatedRun;
+          g.rotatedRunText = remaining;
+          page.glyphs.push_back(g);
+          row = static_cast<uint16_t>(row + remRows);
+          if (row >= rowsPerColumn) {
+            column++;
+            row = 0;
+            finalizePageIfNeeded();
+          }
+          break;
+        }
+
+        // Doesn't fit — find a space to break at that fits within availRows.
+        // Measure progressively shorter prefixes ending at a space.
+        size_t breakAt = std::string::npos;
+        for (size_t sp = remaining.rfind(' '); sp != std::string::npos; sp = (sp == 0) ? std::string::npos : remaining.rfind(' ', sp - 1)) {
+          std::string prefix = remaining.substr(0, sp);
+          const int prefixPx = renderer_.getTextAdvanceX(fontId_, prefix.c_str(), static_cast<EpdFontFamily::Style>(kNoStyle));
+          const uint16_t prefixRows = static_cast<uint16_t>(std::max(1, static_cast<int>(std::ceil(static_cast<double>(prefixPx) / cellPx))));
+          if (prefixRows <= availRows) {
+            breakAt = sp;
+            break;
+          }
+        }
+
+        if (breakAt == std::string::npos) {
+          // No space-break fits — move to a fresh column.
+          if (row != 0) {
+            column++;
+            row = 0;
+            finalizePageIfNeeded();
+          } else {
+            // Already at top of column and still doesn't fit — force-place
+            // the whole thing to avoid an infinite loop.
+            const int topY = 0;
+            VerticalGlyph g;
+            g.codepoint = 0;
+            g.column = column;
+            g.row = 0;
+            g.x = static_cast<uint16_t>(columnLeftX(column) + cellPx - ascender);
+            g.y = static_cast<uint16_t>(topY);
+            g.paragraphIndex = pc.paragraphIndex;
+            g.byteOffset = pc.byteOffset;
+            g.renderKind = VerticalGlyph::RotatedRun;
+            g.rotatedRunText = remaining;
+            page.glyphs.push_back(g);
+            row = std::min(remRows, rowsPerColumn);
+            if (row >= rowsPerColumn) {
+              column++;
+              row = 0;
+              finalizePageIfNeeded();
+            }
+            break;
+          }
+          continue;
+        }
+
+        // Place the prefix chunk.
+        std::string chunk = remaining.substr(0, breakAt);
+        const int chunkPx = renderer_.getTextAdvanceX(fontId_, chunk.c_str(), static_cast<EpdFontFamily::Style>(kNoStyle));
+        const uint16_t chunkRows = static_cast<uint16_t>(std::max(1, static_cast<int>(std::ceil(static_cast<double>(chunkPx) / cellPx))));
+
+        const int topY = row * cellPx;
+        VerticalGlyph g;
+        g.codepoint = 0;
+        g.column = column;
+        g.row = row;
+        g.x = static_cast<uint16_t>(columnLeftX(column) + cellPx - ascender);
+        g.y = static_cast<uint16_t>(topY);
+        g.paragraphIndex = pc.paragraphIndex;
+        g.byteOffset = pc.byteOffset;
+        g.renderKind = VerticalGlyph::RotatedRun;
+        g.rotatedRunText = chunk;
+        page.glyphs.push_back(g);
+
+        row = static_cast<uint16_t>(row + chunkRows);
+        if (row >= rowsPerColumn) {
+          column++;
+          row = 0;
+          finalizePageIfNeeded();
+        }
+
+        // Skip the space and continue with the rest.
+        remaining = remaining.substr(breakAt + 1);
       }
 
-      const int topY = row * cellPx;
-      VerticalGlyph g;
-      g.codepoint = 0;
-      g.column = column;
-      g.row = row;
-      g.x = static_cast<uint16_t>(columnLeftX(column) + cellPx - ascender);
-      g.y = static_cast<uint16_t>(topY);
-      g.paragraphIndex = pc.paragraphIndex;
-      g.byteOffset = pc.byteOffset;
-      g.renderKind = VerticalGlyph::RotatedRun;
-      g.rotatedRunText = runUtf8;
-      page.glyphs.push_back(g);
-
-      row = static_cast<uint16_t>(row + rowsNeeded);
-      if (row >= rowsPerColumn) {
-        column++;
-        row = 0;
-        finalizePageIfNeeded();
-      }
       idx = runEnd;
       continue;
     }
