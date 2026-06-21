@@ -42,12 +42,12 @@ void drawGlyphs(GfxRenderer& renderer, const VerticalPage& page, int fontId, int
 
     if (g.renderKind == VerticalGlyph::RotatedRun) {
       renderer.drawTextRotated90CCW(fontId, dx, dy, g.rotatedRunText.c_str(), black,
-                                     static_cast<EpdFontFamily::Style>(kNoStyle));
+                                     static_cast<EpdFontFamily::Style>(g.style));
       continue;
     }
 
     if (g.renderKind == VerticalGlyph::UprightRun) {
-      renderer.drawText(fontId, dx, dy, g.rotatedRunText.c_str(), black, static_cast<EpdFontFamily::Style>(kNoStyle));
+      renderer.drawText(fontId, dx, dy, g.rotatedRunText.c_str(), black, static_cast<EpdFontFamily::Style>(g.style));
       continue;
     }
 
@@ -57,13 +57,13 @@ void drawGlyphs(GfxRenderer& renderer, const VerticalPage& page, int fontId, int
         dy += std::max(1, (cellPx * 5) / 8);
       }
       renderer.drawCharVerticalRotatedInCell(fontId, dx, dy, cellPx, g.codepoint, shiftType, black,
-                                             static_cast<EpdFontFamily::Style>(kNoStyle));
+                                             static_cast<EpdFontFamily::Style>(g.style));
       continue;
     }
 
     if (g.renderKind == VerticalGlyph::SmallKanaCorner) {
       renderer.drawCharVerticalCornerTopRight(fontId, dx, dy, cellPx, g.codepoint, black,
-                                              static_cast<EpdFontFamily::Style>(kNoStyle));
+                                              static_cast<EpdFontFamily::Style>(g.style));
       continue;
     }
 
@@ -76,7 +76,7 @@ void drawGlyphs(GfxRenderer& renderer, const VerticalPage& page, int fontId, int
     int uprightDy = dy;
     {
       int gl = 0, gw = 0, gt = 0, gh = 0;
-      if (renderer.getGlyphMetrics(fontId, g.codepoint, static_cast<EpdFontFamily::Style>(kNoStyle), &gl, &gw, &gt,
+      if (renderer.getGlyphMetrics(fontId, g.codepoint, static_cast<EpdFontFamily::Style>(g.style), &gl, &gw, &gt,
                                    &gh) && gh > 0 && gh < gt) {
         // Thin glyph (一): ink sits near the middle of the em-box, not the
         // top. Remove the uniform nudge and instead position so the ink's
@@ -85,7 +85,7 @@ void drawGlyphs(GfxRenderer& renderer, const VerticalPage& page, int fontId, int
         uprightDy = g.y + offsetY + gt - gh / 2;
       }
     }
-    renderer.drawText(fontId, dx, uprightDy, utf8Char.c_str(), black, static_cast<EpdFontFamily::Style>(kNoStyle));
+    renderer.drawText(fontId, dx, uprightDy, utf8Char.c_str(), black, static_cast<EpdFontFamily::Style>(g.style));
   }
 }
 

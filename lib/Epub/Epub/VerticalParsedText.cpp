@@ -193,7 +193,7 @@ void VerticalParsedText::addParagraph(const std::string& utf8Text) {
       i += consumed;
       continue;
     }
-    stream_.push_back(PendingChar{cp, paragraphIndex, static_cast<uint32_t>(i), {}});
+    stream_.push_back(PendingChar{cp, paragraphIndex, static_cast<uint32_t>(i), 0, {}});
     i += consumed;
   }
 }
@@ -246,7 +246,7 @@ void VerticalParsedText::addAnnotatedParagraph(const std::vector<RubyRun>& runs)
     if (run.rubyText.empty()) {
       for (size_t k = 0; k < baseCps.size(); k++) {
         stream_.push_back(
-            PendingChar{baseCps[k], paragraphIndex, static_cast<uint32_t>(baseOffsets[k]), {}});
+            PendingChar{baseCps[k], paragraphIndex, static_cast<uint32_t>(baseOffsets[k]), run.style, {}});
       }
     } else {
       // Decode ruby codepoints to distribute evenly across base characters.
@@ -288,7 +288,7 @@ void VerticalParsedText::addAnnotatedParagraph(const std::vector<RubyRun>& runs)
           }
         }
         stream_.push_back(PendingChar{baseCps[k], paragraphIndex,
-                                       static_cast<uint32_t>(baseOffsets[k]), std::move(slice)});
+                                       static_cast<uint32_t>(baseOffsets[k]), run.style, std::move(slice)});
       }
     }
 
@@ -347,6 +347,7 @@ std::vector<VerticalPage> VerticalParsedText::layoutPages() {
     g.row = rowIdx;
     g.paragraphIndex = pc.paragraphIndex;
     g.byteOffset = pc.byteOffset;
+    g.style = pc.style;
 
     if (Kinsoku::needsVerticalRotation(pc.codepoint)) {
       // Bracket / dash / chōonpu: keep one-cell layout, but mark as rotated
@@ -455,6 +456,7 @@ std::vector<VerticalPage> VerticalParsedText::layoutPages() {
         g.y = static_cast<uint16_t>(row * cellPx + ascender);
         g.paragraphIndex = pc.paragraphIndex;
         g.byteOffset = pc.byteOffset;
+        g.style = pc.style;
         g.renderKind = VerticalGlyph::UprightRun;
         g.rotatedRunText = runUtf8;
         page.glyphs.push_back(g);
@@ -496,6 +498,7 @@ std::vector<VerticalPage> VerticalParsedText::layoutPages() {
         g.y = static_cast<uint16_t>(topY + numericRotatedDownNudge);
         g.paragraphIndex = pc.paragraphIndex;
         g.byteOffset = pc.byteOffset;
+        g.style = pc.style;
         g.renderKind = VerticalGlyph::RotatedRun;
         g.rotatedRunText = runUtf8;
         page.glyphs.push_back(g);
@@ -555,6 +558,7 @@ std::vector<VerticalPage> VerticalParsedText::layoutPages() {
           g.y = static_cast<uint16_t>(topY);
           g.paragraphIndex = pc.paragraphIndex;
           g.byteOffset = pc.byteOffset;
+          g.style = pc.style;
           g.renderKind = VerticalGlyph::RotatedRun;
           g.rotatedRunText = remaining;
           page.glyphs.push_back(g);
@@ -626,6 +630,7 @@ std::vector<VerticalPage> VerticalParsedText::layoutPages() {
         g.y = static_cast<uint16_t>(topY);
         g.paragraphIndex = pc.paragraphIndex;
         g.byteOffset = pc.byteOffset;
+        g.style = pc.style;
         g.renderKind = VerticalGlyph::RotatedRun;
         g.rotatedRunText = chunk;
         page.glyphs.push_back(g);

@@ -13,7 +13,7 @@
 
 namespace {
 
-constexpr uint8_t VSECTION_FILE_VERSION = 32;
+constexpr uint8_t VSECTION_FILE_VERSION = 33;
 constexpr size_t PARSE_BUFFER_SIZE = 1024;
 
 using RubyRun = VerticalParsedText::RubyRun;
@@ -35,13 +35,38 @@ struct TextExtractor {
   std::string rubyBase;
   std::string rubyAnnotation;
 
+  // Style tracking — each entry records the elementDepth at which
+  // bold/italic was activated. On endElement, if we're leaving that
+  // depth, pop and flush.
+  int boldDepth = 0;
+  int italicDepth = 0;
+  int elementDepth = 0;
+  static constexpr int MAX_STYLE_STACK = 8;
+  int boldOpenedAtDepth[MAX_STYLE_STACK] = {};
+  int boldStackSize = 0;
+  int italicOpenedAtDepth[MAX_STYLE_STACK] = {};
+  int italicStackSize = 0;
+
+  static bool isBoldTag(const char* name) {
+    return strcasecmp(name, "b") == 0 || strcasecmp(name, "strong") == 0;
+  }
+  static bool isItalicTag(const char* name) {
+    return strcasecmp(name, "i") == 0 || strcasecmp(name, "em") == 0;
+  }
+  uint8_t currentStyle() const {
+    uint8_t s = 0;
+    if (boldDepth > 0) s |= 1;    // EpdFontFamily::BOLD
+    if (italicDepth > 0) s |= 2;  // EpdFontFamily::ITALIC
+    return s;
+  }
+
   static bool isSkipTag(const char* name) {
     return strcasecmp(name, "head") == 0 || strcasecmp(name, "style") == 0 || strcasecmp(name, "script") == 0;
   }
 
   void flushCurrentText() {
     if (!currentText.empty()) {
-      currentRuns.push_back(RubyRun{std::move(currentText), {}});
+      currentRuns.push_back(RubyRun{std::move(currentText), {}, currentStyle()});
       currentText.clear();
     }
   }
@@ -63,8 +88,26 @@ struct TextExtractor {
     return false;
   }
 
-  static void XMLCALL startElement(void* userData, const char* name, const char** /*atts*/) {
+  static bool hasClass(const char** atts, const char* cls) {
+    if (!atts) return false;
+    for (int i = 0; atts[i]; i += 2) {
+      if (strcasecmp(atts[i], "class") == 0 && atts[i + 1]) {
+        const char* val = atts[i + 1];
+        const size_t clsLen = strlen(cls);
+        while (*val) {
+          while (*val == ' ') val++;
+          if (strncasecmp(val, cls, clsLen) == 0 && (val[clsLen] == ' ' || val[clsLen] == '\0'))
+            return true;
+          while (*val && *val != ' ') val++;
+        }
+      }
+    }
+    return false;
+  }
+
+  static void XMLCALL startElement(void* userData, const char* name, const char** atts) {
     auto* self = static_cast<TextExtractor*>(userData);
+    self->elementDepth++;
     if (self->skipDepth >= 0) {
       self->skipDepth++;
       return;
@@ -90,6 +133,18 @@ struct TextExtractor {
     } else if (strcasecmp(name, "rp") == 0) {
       self->inRp = true;
     }
+    if (isBoldTag(name) || hasClass(atts, "bold")) {
+      self->flushCurrentText();
+      self->boldDepth++;
+      if (self->boldStackSize < MAX_STYLE_STACK)
+        self->boldOpenedAtDepth[self->boldStackSize++] = self->elementDepth;
+    }
+    if (isItalicTag(name) || hasClass(atts, "italic")) {
+      self->flushCurrentText();
+      self->italicDepth++;
+      if (self->italicStackSize < MAX_STYLE_STACK)
+        self->italicOpenedAtDepth[self->italicStackSize++] = self->elementDepth;
+    }
     if (strcasecmp(name, "br") == 0 || strcasecmp(name, "br/") == 0) {
       if (!self->inRuby) {
         self->currentText.push_back('\n');
@@ -99,6 +154,7 @@ struct TextExtractor {
 
   static void XMLCALL endElement(void* userData, const char* name) {
     auto* self = static_cast<TextExtractor*>(userData);
+    self->elementDepth--;
     if (self->skipDepth > 0) {
       self->skipDepth--;
       if (self->skipDepth == 0) self->skipDepth = -1;
@@ -112,7 +168,7 @@ struct TextExtractor {
       self->inRt = false;
       // Emit a RubyRun for the base text accumulated so far with this annotation.
       if (!self->rubyBase.empty()) {
-        self->currentRuns.push_back(RubyRun{std::move(self->rubyBase), std::move(self->rubyAnnotation)});
+        self->currentRuns.push_back(RubyRun{std::move(self->rubyBase), std::move(self->rubyAnnotation), self->currentStyle()});
         self->rubyBase.clear();
       }
       self->rubyAnnotation.clear();
@@ -121,11 +177,21 @@ struct TextExtractor {
     if (strcasecmp(name, "ruby") == 0) {
       // Flush any remaining base text that had no <rt> (malformed markup).
       if (!self->rubyBase.empty()) {
-        self->currentRuns.push_back(RubyRun{std::move(self->rubyBase), {}});
+        self->currentRuns.push_back(RubyRun{std::move(self->rubyBase), {}, self->currentStyle()});
         self->rubyBase.clear();
       }
       self->inRuby = false;
       return;
+    }
+    if (self->boldStackSize > 0 && self->boldOpenedAtDepth[self->boldStackSize - 1] == self->elementDepth) {
+      self->flushCurrentText();
+      self->boldDepth--;
+      self->boldStackSize--;
+    }
+    if (self->italicStackSize > 0 && self->italicOpenedAtDepth[self->italicStackSize - 1] == self->elementDepth) {
+      self->flushCurrentText();
+      self->italicDepth--;
+      self->italicStackSize--;
     }
     if (isBlockTag(name)) {
       self->blockDepth--;
@@ -330,6 +396,7 @@ bool VerticalSection::saveToCache(const int fontId, const uint16_t viewportWidth
       serialization::writePod(file, g.paragraphIndex);
       serialization::writePod(file, g.byteOffset);
       serialization::writePod(file, g.renderKind);
+      serialization::writePod(file, g.style);
 
       if (g.renderKind == VerticalGlyph::RotatedRun || g.renderKind == VerticalGlyph::UprightRun) {
         const auto runLen = static_cast<uint16_t>(g.rotatedRunText.size());
@@ -404,6 +471,7 @@ bool VerticalSection::loadFromCache(const int fontId, const uint16_t viewportWid
       serialization::readPod(file, g.paragraphIndex);
       serialization::readPod(file, g.byteOffset);
       serialization::readPod(file, g.renderKind);
+      serialization::readPod(file, g.style);
 
       if (g.renderKind == VerticalGlyph::RotatedRun || g.renderKind == VerticalGlyph::UprightRun) {
         uint16_t runLen;
