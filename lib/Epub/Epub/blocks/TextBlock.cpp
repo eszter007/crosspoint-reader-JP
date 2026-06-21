@@ -64,7 +64,7 @@ void TextBlock::render(const GfxRenderer& renderer, const int fontId, const int 
       const int wordWidth = renderer.getTextWidth(fontId, words[i].c_str(), currentStyle);
       const int rubyAdvance = renderer.getTextAdvanceX(fontId, wordRuby[i].c_str(), rubyStyle);
       const int rubyX = wordX + (wordWidth - rubyAdvance) / 2;
-      const int rubyY = y - ascender * 3 / 4;
+      const int rubyY = y - ascender;
       renderer.drawText(fontId, rubyX, rubyY, wordRuby[i].c_str(), true, rubyStyle);
     }
 
