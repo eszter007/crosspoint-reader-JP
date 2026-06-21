@@ -193,7 +193,7 @@ void VerticalParsedText::addParagraph(const std::string& utf8Text) {
       i += consumed;
       continue;
     }
-    stream_.push_back(PendingChar{cp, paragraphIndex, static_cast<uint32_t>(i), 0, {}});
+    stream_.push_back(PendingChar{cp, paragraphIndex, static_cast<uint32_t>(i), 0, false, {}});
     i += consumed;
   }
 }
@@ -246,7 +246,7 @@ void VerticalParsedText::addAnnotatedParagraph(const std::vector<RubyRun>& runs)
     if (run.rubyText.empty()) {
       for (size_t k = 0; k < baseCps.size(); k++) {
         stream_.push_back(
-            PendingChar{baseCps[k], paragraphIndex, static_cast<uint32_t>(baseOffsets[k]), run.style, {}});
+            PendingChar{baseCps[k], paragraphIndex, static_cast<uint32_t>(baseOffsets[k]), run.style, run.emphasis, {}});
       }
     } else {
       // Decode ruby codepoints to distribute evenly across base characters.
@@ -288,7 +288,7 @@ void VerticalParsedText::addAnnotatedParagraph(const std::vector<RubyRun>& runs)
           }
         }
         stream_.push_back(PendingChar{baseCps[k], paragraphIndex,
-                                       static_cast<uint32_t>(baseOffsets[k]), run.style, std::move(slice)});
+                                       static_cast<uint32_t>(baseOffsets[k]), run.style, run.emphasis, std::move(slice)});
       }
     }
 
@@ -348,6 +348,7 @@ std::vector<VerticalPage> VerticalParsedText::layoutPages() {
     g.paragraphIndex = pc.paragraphIndex;
     g.byteOffset = pc.byteOffset;
     g.style = pc.style;
+    g.emphasis = pc.emphasis;
 
     if (Kinsoku::needsVerticalRotation(pc.codepoint)) {
       // Bracket / dash / chōonpu: keep one-cell layout, but mark as rotated

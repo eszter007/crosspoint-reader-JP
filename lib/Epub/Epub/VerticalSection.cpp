@@ -13,7 +13,7 @@
 
 namespace {
 
-constexpr uint8_t VSECTION_FILE_VERSION = 33;
+constexpr uint8_t VSECTION_FILE_VERSION = 34;
 constexpr size_t PARSE_BUFFER_SIZE = 1024;
 
 using RubyRun = VerticalParsedText::RubyRun;
@@ -46,6 +46,11 @@ struct TextExtractor {
   int boldStackSize = 0;
   int italicOpenedAtDepth[MAX_STYLE_STACK] = {};
   int italicStackSize = 0;
+  int emphasisDepth = 0;
+  int emphasisOpenedAtDepth[MAX_STYLE_STACK] = {};
+  int emphasisStackSize = 0;
+
+  bool hasEmphasis() const { return emphasisDepth > 0; }
 
   static bool isBoldTag(const char* name) {
     return strcasecmp(name, "b") == 0 || strcasecmp(name, "strong") == 0;
@@ -66,7 +71,7 @@ struct TextExtractor {
 
   void flushCurrentText() {
     if (!currentText.empty()) {
-      currentRuns.push_back(RubyRun{std::move(currentText), {}, currentStyle()});
+      currentRuns.push_back(RubyRun{std::move(currentText), {}, currentStyle(), hasEmphasis()});
       currentText.clear();
     }
   }
@@ -145,6 +150,14 @@ struct TextExtractor {
       if (self->italicStackSize < MAX_STYLE_STACK)
         self->italicOpenedAtDepth[self->italicStackSize++] = self->elementDepth;
     }
+    if (hasClass(atts, "em-sesame") || hasClass(atts, "em-dot") || hasClass(atts, "em-circle") ||
+        hasClass(atts, "em-sesame-open") || hasClass(atts, "em-dot-open") || hasClass(atts, "em-circle-open") ||
+        hasClass(atts, "em-triangle") || hasClass(atts, "em-double-circle")) {
+      self->flushCurrentText();
+      self->emphasisDepth++;
+      if (self->emphasisStackSize < MAX_STYLE_STACK)
+        self->emphasisOpenedAtDepth[self->emphasisStackSize++] = self->elementDepth;
+    }
     if (strcasecmp(name, "br") == 0 || strcasecmp(name, "br/") == 0) {
       if (!self->inRuby) {
         self->currentText.push_back('\n');
@@ -168,7 +181,7 @@ struct TextExtractor {
       self->inRt = false;
       // Emit a RubyRun for the base text accumulated so far with this annotation.
       if (!self->rubyBase.empty()) {
-        self->currentRuns.push_back(RubyRun{std::move(self->rubyBase), std::move(self->rubyAnnotation), self->currentStyle()});
+        self->currentRuns.push_back(RubyRun{std::move(self->rubyBase), std::move(self->rubyAnnotation), self->currentStyle(), self->hasEmphasis()});
         self->rubyBase.clear();
       }
       self->rubyAnnotation.clear();
@@ -177,7 +190,7 @@ struct TextExtractor {
     if (strcasecmp(name, "ruby") == 0) {
       // Flush any remaining base text that had no <rt> (malformed markup).
       if (!self->rubyBase.empty()) {
-        self->currentRuns.push_back(RubyRun{std::move(self->rubyBase), {}, self->currentStyle()});
+        self->currentRuns.push_back(RubyRun{std::move(self->rubyBase), {}, self->currentStyle(), self->hasEmphasis()});
         self->rubyBase.clear();
       }
       self->inRuby = false;
@@ -192,6 +205,11 @@ struct TextExtractor {
       self->flushCurrentText();
       self->italicDepth--;
       self->italicStackSize--;
+    }
+    if (self->emphasisStackSize > 0 && self->emphasisOpenedAtDepth[self->emphasisStackSize - 1] == self->elementDepth) {
+      self->flushCurrentText();
+      self->emphasisDepth--;
+      self->emphasisStackSize--;
     }
     if (isBlockTag(name)) {
       self->blockDepth--;
@@ -397,6 +415,7 @@ bool VerticalSection::saveToCache(const int fontId, const uint16_t viewportWidth
       serialization::writePod(file, g.byteOffset);
       serialization::writePod(file, g.renderKind);
       serialization::writePod(file, g.style);
+      serialization::writePod(file, g.emphasis);
 
       if (g.renderKind == VerticalGlyph::RotatedRun || g.renderKind == VerticalGlyph::UprightRun) {
         const auto runLen = static_cast<uint16_t>(g.rotatedRunText.size());
@@ -472,6 +491,7 @@ bool VerticalSection::loadFromCache(const int fontId, const uint16_t viewportWid
       serialization::readPod(file, g.byteOffset);
       serialization::readPod(file, g.renderKind);
       serialization::readPod(file, g.style);
+      serialization::readPod(file, g.emphasis);
 
       if (g.renderKind == VerticalGlyph::RotatedRun || g.renderKind == VerticalGlyph::UprightRun) {
         uint16_t runLen;

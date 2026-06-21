@@ -86,6 +86,13 @@ void drawGlyphs(GfxRenderer& renderer, const VerticalPage& page, int fontId, int
       }
     }
     renderer.drawText(fontId, dx, uprightDy, utf8Char.c_str(), black, static_cast<EpdFontFamily::Style>(g.style));
+
+    if (g.emphasis) {
+      const int emX = dx + cellPx + std::max(1, cellPx / 12);
+      const int emY = dy;
+      renderer.drawText(fontId, emX, emY, "\xef\xb9\x85", black,
+                        static_cast<EpdFontFamily::Style>(EpdFontFamily::SUP));
+    }
   }
 }
 

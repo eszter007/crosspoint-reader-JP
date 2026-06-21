@@ -36,6 +36,7 @@ struct VerticalGlyph {
   uint32_t byteOffset = 0;   // UTF-8 byte offset into that paragraph's text
   uint8_t renderKind = Upright;
   uint8_t style = 0;           // EpdFontFamily::Style flags (BOLD, ITALIC, etc.)
+  bool emphasis = false;       // text-emphasis (sesame dots beside character)
   // Populated for run render kinds (RotatedRun/UprightRun).
   std::string rotatedRunText;
   // Furigana/ruby annotation for this glyph (UTF-8). Rendered in a smaller
@@ -91,6 +92,7 @@ class VerticalParsedText {
     std::string baseText;
     std::string rubyText;
     uint8_t style = 0;
+    bool emphasis = false;
   };
 
   void addAnnotatedParagraph(const std::vector<RubyRun>& runs);
@@ -123,6 +125,7 @@ class VerticalParsedText {
     uint32_t paragraphIndex;
     uint32_t byteOffset;
     uint8_t style;
+    bool emphasis;
     std::string rubyText;
   };
 
