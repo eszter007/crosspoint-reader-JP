@@ -880,7 +880,9 @@ void EpubReaderActivity::render(RenderLock&& lock) {
       }
 
       if (pendingPageJump.has_value()) {
-        if (*pendingPageJump >= verticalSection->pageCount && verticalSection->pageCount > 0) {
+        if (verticalSection->pageCount == 0) {
+          verticalSection->currentPage = 0;
+        } else if (*pendingPageJump >= verticalSection->pageCount) {
           verticalSection->currentPage = verticalSection->pageCount - 1;
         } else {
           verticalSection->currentPage = *pendingPageJump;
@@ -888,9 +890,11 @@ void EpubReaderActivity::render(RenderLock&& lock) {
         pendingPageJump.reset();
       } else {
         verticalSection->currentPage = nextPageNumber;
-        if (verticalSection->currentPage < 0) {
+        if (verticalSection->pageCount == 0) {
           verticalSection->currentPage = 0;
-        } else if (verticalSection->currentPage >= verticalSection->pageCount && verticalSection->pageCount > 0) {
+        } else if (verticalSection->currentPage < 0) {
+          verticalSection->currentPage = 0;
+        } else if (verticalSection->currentPage >= verticalSection->pageCount) {
           verticalSection->currentPage = verticalSection->pageCount - 1;
         }
       }
@@ -1003,7 +1007,9 @@ void EpubReaderActivity::render(RenderLock&& lock) {
     }
 
     if (pendingPageJump.has_value()) {
-      if (*pendingPageJump >= section->pageCount && section->pageCount > 0) {
+      if (section->pageCount == 0) {
+        section->currentPage = 0;
+      } else if (*pendingPageJump >= section->pageCount) {
         section->currentPage = section->pageCount - 1;
       } else {
         section->currentPage = *pendingPageJump;
@@ -1314,13 +1320,20 @@ void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int or
 
 void EpubReaderActivity::renderStatusBar() const {
   // Calculate progress in book
-  const int currentPage = verticalSection ? verticalSection->currentPage + 1
-                          : section       ? section->currentPage + 1
-                                          : 1;
-  const float pageCount = verticalSection ? verticalSection->pageCount
-                          : section       ? section->pageCount
-                                          : 1;
-  const float sectionChapterProg = (pageCount > 0) ? (static_cast<float>(currentPage) / pageCount) : 0;
+  const int rawCurrentPage = verticalSection ? verticalSection->currentPage
+                           : section       ? section->currentPage
+                                           : 0;
+  const int rawPageCount = verticalSection ? verticalSection->pageCount
+                         : section       ? section->pageCount
+                                         : 0;
+
+  // Keep status bar sane on empty chapters: show a single skippable page (1/1)
+  // instead of sentinel/underflow values like 65536/0.
+  const int currentPage =
+      (rawPageCount > 0) ? std::clamp(rawCurrentPage + 1, 1, rawPageCount) : 1;
+  const int pageCount = (rawPageCount > 0) ? rawPageCount : 1;
+
+  const float sectionChapterProg = (rawPageCount > 0) ? (static_cast<float>(currentPage) / pageCount) : 0.0f;
   const float bookProgress = epub->calculateProgress(currentSpineIndex, sectionChapterProg) * 100;
 
   std::string title;
