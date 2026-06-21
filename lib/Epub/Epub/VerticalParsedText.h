@@ -54,6 +54,12 @@ struct VerticalPage {
   std::vector<VerticalGlyph> glyphs;
   uint16_t columnCount = 0;
   uint16_t rowsPerColumn = 0;
+  // If non-empty, this page is an image page — render the image instead of glyphs.
+  std::string imagePath;
+  int16_t imageWidth = 0;
+  int16_t imageHeight = 0;
+  bool imageRotated = false;  // true = landscape image rotated 90° CW to fill portrait screen
+  bool isImagePage() const { return !imagePath.empty(); }
 };
 
 // Lays out one or more paragraphs of Japanese (or any CJK) text into
@@ -107,6 +113,7 @@ class VerticalParsedText {
   // SETTINGS.lineCompression plays for horizontal text; exposed as a
   // setter so EpubReaderActivity can wire it to a reader setting instead
   // of a hardcoded constant.
+  void reset() { stream_.clear(); paragraphBreaksBeforeIndex_.clear(); }
   void setColumnGapPx(int gapPx) { columnGapPx_ = gapPx; }
   // Extra right-side padding (in pixels) reserved for vertical ruby so it
   // doesn't clip against the right edge.

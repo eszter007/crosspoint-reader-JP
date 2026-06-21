@@ -4,6 +4,7 @@
 #include <Epub/Page.h>
 #include <Epub/VerticalSection.h>
 #include <Epub/blocks/TextBlock.h>
+#include <Epub/blocks/ImageBlock.h>
 #include <Epub/blocks/VerticalTextBlock.h>
 #include <FontCacheManager.h>
 #include <FsHelpers.h>
@@ -954,9 +955,34 @@ void EpubReaderActivity::render(RenderLock&& lock) {
 
       currentPageFootnotes.clear();
       const auto start = millis();
-      VerticalTextBlock block(*vpage);
-      block.render(renderer, SETTINGS.getReaderFontId(), SETTINGS.getRubyFontId(), orientedMarginLeft, orientedMarginTop,
-                   true);
+      if (vpage->isImagePage()) {
+        const int reserve = UITheme::getInstance().getStatusBarHeight() +
+                            UITheme::getInstance().getMetrics().statusBarVerticalMargin +
+                            SETTINGS.screenMargin;
+        ImageBlock imgBlock(vpage->imagePath, vpage->imageWidth, vpage->imageHeight);
+        if (vpage->imageRotated) {
+          imgBlock.setRotated(true, static_cast<int16_t>(reserve));
+          imgBlock.render(renderer, 0, 0);  // ImageBlock handles rotation + centering
+        } else {
+          int iw = vpage->imageWidth;
+          int ih = vpage->imageHeight;
+          if (iw > viewportWidth || ih > viewportHeight) {
+            const float sx = static_cast<float>(viewportWidth) / iw;
+            const float sy = static_cast<float>(viewportHeight) / ih;
+            const float s = (sx < sy) ? sx : sy;
+            iw = static_cast<int>(iw * s + 0.5f);
+            ih = static_cast<int>(ih * s + 0.5f);
+          }
+          ImageBlock fitBlock(vpage->imagePath, static_cast<int16_t>(iw), static_cast<int16_t>(ih));
+          const int imgX = orientedMarginLeft + (viewportWidth - iw) / 2;
+          const int imgY = orientedMarginTop + (viewportHeight - ih) / 2;
+          fitBlock.render(renderer, imgX, imgY);
+        }
+      } else {
+        VerticalTextBlock block(*vpage);
+        block.render(renderer, SETTINGS.getReaderFontId(), SETTINGS.getRubyFontId(), orientedMarginLeft, orientedMarginTop,
+                     true);
+      }
       LOG_DBG("ERS", "Rendered vertical page in %dms", millis() - start);
     }
 

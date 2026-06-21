@@ -6,14 +6,17 @@
 #include <XmlParserUtils.h>
 #include <expat.h>
 
+#include <FsHelpers.h>
+
 #include <cstring>
 #include <string>
 
+#include "Epub/converters/ImageDecoderFactory.h"
 #include "GfxRenderer.h"
 
 namespace {
 
-constexpr uint8_t VSECTION_FILE_VERSION = 34;
+constexpr uint8_t VSECTION_FILE_VERSION = 36;
 constexpr size_t PARSE_BUFFER_SIZE = 1024;
 
 using RubyRun = VerticalParsedText::RubyRun;
@@ -22,6 +25,12 @@ struct TextExtractor {
   // Each paragraph is a sequence of RubyRun entries. Unannotated text has
   // empty ruby; annotated text (<ruby>base<rt>reading</rt></ruby>) maps
   // base -> rubyText.
+  struct ImageEntry {
+    std::string src;
+    size_t insertBeforeParagraph;
+  };
+  std::vector<ImageEntry> images;
+
   std::vector<std::vector<RubyRun>> paragraphs;
   std::vector<RubyRun> currentRuns;
   std::string currentText;
@@ -157,6 +166,21 @@ struct TextExtractor {
       self->emphasisDepth++;
       if (self->emphasisStackSize < MAX_STYLE_STACK)
         self->emphasisOpenedAtDepth[self->emphasisStackSize++] = self->elementDepth;
+    }
+    if (strcasecmp(name, "img") == 0 || strcasecmp(name, "image") == 0) {
+      const char* src = nullptr;
+      if (atts) {
+        for (int i = 0; atts[i]; i += 2) {
+          if (strcasecmp(atts[i], "src") == 0 || strcasecmp(atts[i], "xlink:href") == 0) {
+            src = atts[i + 1];
+            break;
+          }
+        }
+      }
+      if (src && src[0] != '\0') {
+        self->flushParagraph();
+        self->images.push_back(ImageEntry{std::string(src), self->paragraphs.size()});
+      }
     }
     if (strcasecmp(name, "br") == 0 || strcasecmp(name, "br/") == 0) {
       if (!self->inRuby) {
@@ -355,11 +379,81 @@ bool VerticalSection::extractParagraphsAndLayout(const int fontId, const uint16_
 
   extractor.flushParagraph();
 
-  if (extractor.paragraphs.empty()) {
+  if (extractor.paragraphs.empty() && extractor.images.empty()) {
     pages.clear();
     pageCount = 0;
     return true;
   }
+
+  // Resolve image paths relative to the chapter's directory in the EPUB.
+  const auto& spineItem = epub->getSpineItem(spineIndex);
+  std::string chapterDir;
+  {
+    const size_t slash = spineItem.href.rfind('/');
+    if (slash != std::string::npos) chapterDir = spineItem.href.substr(0, slash + 1);
+  }
+
+  const std::string imageBasePath = epub->getCachePath() + "/img_v" + std::to_string(spineIndex) + "_";
+
+  auto makeImagePage = [&](const TextExtractor::ImageEntry& img, size_t imgIdx) -> VerticalPage {
+    std::string resolvedSrc = FsHelpers::normalisePath(FsHelpers::decodeUriEscapes(chapterDir + img.src));
+
+    // Determine extension and cached path
+    std::string ext;
+    const size_t extPos = resolvedSrc.rfind('.');
+    if (extPos != std::string::npos) ext = resolvedSrc.substr(extPos);
+    const std::string cachedPath = imageBasePath + std::to_string(imgIdx) + ext;
+
+    // Extract image from EPUB to cache if not already present
+    if (!Storage.exists(cachedPath.c_str())) {
+      HalFile cachedFile;
+      if (Storage.openFileForWrite("VSC", cachedPath, cachedFile)) {
+        epub->readItemContentsToStream(resolvedSrc, cachedFile, 4096);
+        cachedFile.flush();
+        cachedFile.close();
+      }
+    }
+
+    // Get actual image dimensions and scale to fit viewport preserving aspect ratio.
+    // Landscape images (wider than tall) are rotated 90° CW to fill the portrait screen.
+    int displayW = viewportWidth;
+    int displayH = viewportHeight;
+    bool rotated = false;
+    ImageToFramebufferDecoder* decoder = ImageDecoderFactory::getDecoder(cachedPath);
+    if (decoder) {
+      ImageDimensions dims = {0, 0};
+      if (decoder->getDimensions(cachedPath, dims) && dims.width > 0 && dims.height > 0) {
+        // Rotate when the image orientation doesn't match the viewport:
+        // portrait viewport + landscape image, or landscape viewport + portrait image.
+        const bool viewportIsPortrait = (viewportHeight > viewportWidth);
+        const bool imageIsLandscape = (dims.width > dims.height);
+        if (viewportIsPortrait == imageIsLandscape) {
+          // Image doesn't match viewport — rotate 90° CW to fill screen better.
+          const float scaleX = static_cast<float>(viewportWidth) / dims.height;
+          const float scaleY = static_cast<float>(viewportHeight) / dims.width;
+          const float scale = (scaleX < scaleY) ? scaleX : scaleY;
+          displayW = static_cast<int>(dims.height * scale + 0.5f);
+          displayH = static_cast<int>(dims.width * scale + 0.5f);
+          rotated = true;
+        } else {
+          const float scaleX = static_cast<float>(viewportWidth) / dims.width;
+          const float scaleY = static_cast<float>(viewportHeight) / dims.height;
+          const float scale = (scaleX < scaleY) ? scaleX : scaleY;
+          displayW = static_cast<int>(dims.width * scale + 0.5f);
+          displayH = static_cast<int>(dims.height * scale + 0.5f);
+        }
+        if (displayW < 1) displayW = 1;
+        if (displayH < 1) displayH = 1;
+      }
+    }
+
+    VerticalPage page;
+    page.imagePath = cachedPath;
+    page.imageWidth = static_cast<int16_t>(displayW);
+    page.imageHeight = static_cast<int16_t>(displayH);
+    page.imageRotated = rotated;
+    return page;
+  };
 
   VerticalParsedText layout(renderer, fontId, viewportWidth, viewportHeight);
   const int lineH = renderer.getLineHeight(fontId);
@@ -375,12 +469,35 @@ bool VerticalSection::extractParagraphsAndLayout(const int fontId, const uint16_
     layout.setColumnGapPx(lineH * 2 / 3);
     layout.setRightPaddingPx((lineH / 2) < 2 ? 2 : (lineH / 2));
   }
-  for (const auto& para : extractor.paragraphs) {
-    layout.addAnnotatedParagraph(para);
+
+  // Layout text paragraphs, inserting image pages at the right positions.
+  size_t nextImageIdx = 0;
+  for (size_t paraIdx = 0; paraIdx <= extractor.paragraphs.size(); paraIdx++) {
+    // Insert any images that belong before this paragraph
+    while (nextImageIdx < extractor.images.size() &&
+           extractor.images[nextImageIdx].insertBeforeParagraph <= paraIdx) {
+      // Flush any pending text pages before inserting the image
+      {
+        auto textPages = layout.layoutPages();
+        pages.insert(pages.end(), std::make_move_iterator(textPages.begin()),
+                     std::make_move_iterator(textPages.end()));
+        layout.reset();
+      }
+      pages.push_back(makeImagePage(extractor.images[nextImageIdx], nextImageIdx));
+      nextImageIdx++;
+    }
+    if (paraIdx < extractor.paragraphs.size()) {
+      layout.addAnnotatedParagraph(extractor.paragraphs[paraIdx]);
+    }
   }
-  pages = layout.layoutPages();
+  // Flush remaining text pages
+  auto remainingPages = layout.layoutPages();
+  pages.insert(pages.end(), std::make_move_iterator(remainingPages.begin()),
+               std::make_move_iterator(remainingPages.end()));
+
   pageCount = static_cast<uint16_t>(pages.size());
-  LOG_DBG("VSC", "Laid out %zu paragraphs into %u pages", extractor.paragraphs.size(), pageCount);
+  LOG_DBG("VSC", "Laid out %zu paragraphs + %zu images into %u pages",
+          extractor.paragraphs.size(), extractor.images.size(), pageCount);
   return true;
 }
 
@@ -400,6 +517,15 @@ bool VerticalSection::saveToCache(const int fontId, const uint16_t viewportWidth
   serialization::writePod(file, pageCount);
 
   for (const auto& page : pages) {
+    const bool isImg = page.isImagePage();
+    serialization::writePod(file, isImg);
+    if (isImg) {
+      serialization::writeString(file, page.imagePath);
+      serialization::writePod(file, page.imageWidth);
+      serialization::writePod(file, page.imageHeight);
+      serialization::writePod(file, page.imageRotated);
+      continue;
+    }
     const auto glyphCount = static_cast<uint32_t>(page.glyphs.size());
     serialization::writePod(file, glyphCount);
     serialization::writePod(file, page.columnCount);
@@ -474,6 +600,16 @@ bool VerticalSection::loadFromCache(const int fontId, const uint16_t viewportWid
 
   for (uint16_t p = 0; p < cachedPageCount; p++) {
     VerticalPage page;
+    bool isImg = false;
+    serialization::readPod(file, isImg);
+    if (isImg) {
+      serialization::readString(file, page.imagePath);
+      serialization::readPod(file, page.imageWidth);
+      serialization::readPod(file, page.imageHeight);
+      serialization::readPod(file, page.imageRotated);
+      pages.push_back(std::move(page));
+      continue;
+    }
     uint32_t glyphCount;
     serialization::readPod(file, glyphCount);
     serialization::readPod(file, page.columnCount);

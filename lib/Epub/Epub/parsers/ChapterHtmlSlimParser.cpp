@@ -619,49 +619,84 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
                   }
                 }
 
-                // Create page for image - only break if image won't fit remaining space
-                if (self->currentPage && !self->currentPage->elements.empty() &&
-                    (self->currentPageNextY + imageMarginTop + displayHeight + imageMarginBottom >
-                     self->viewportHeight)) {
+                (void)imageMarginTop;
+                (void)imageMarginBottom;
+
+                // Images get their own dedicated page. Complete the current page
+                // if it already has content, then start a fresh page for the image.
+                if (self->currentPage && !self->currentPage->elements.empty()) {
                   self->completePageFn(std::move(self->currentPage), self->xpathParagraphIndex,
                                        self->xpathListItemIndex);
                   self->completedPageCount++;
-                  self->currentPage.reset(new Page());
-                  if (!self->currentPage) {
-                    LOG_ERR("EHP", "Failed to create new page");
-                    return;
-                  }
-                  self->currentPageNextY = 0;
-                } else if (!self->currentPage) {
-                  self->currentPage.reset(new Page());
-                  if (!self->currentPage) {
-                    LOG_ERR("EHP", "Failed to create initial page");
-                    return;
-                  }
-                  self->currentPageNextY = 0;
                 }
+                self->currentPage.reset(new Page());
+                if (!self->currentPage) {
+                  LOG_ERR("EHP", "Failed to create image page");
+                  return;
+                }
+                self->currentPageNextY = 0;
 
-                // Apply top margin from container block
-                self->currentPageNextY += imageMarginTop;
+                // Rotate when the image aspect doesn't match the viewport, so it
+                // fills the screen (the user tilts the device to view it).
+                const bool viewportIsPortrait = self->viewportHeight > self->viewportWidth;
+                const bool imageIsLandscape = dims.width > dims.height;
+                const bool rotateImage =
+                    dims.width > 0 && dims.height > 0 && (viewportIsPortrait == imageIsLandscape);
 
-                // Create ImageBlock and add to page
-                auto imageBlock = std::make_shared<ImageBlock>(cachedImagePath, displayWidth, displayHeight);
+                std::shared_ptr<ImageBlock> imageBlock;
+                int xPos = 0;
+                int yPos = 0;
+                if (rotateImage) {
+                  // Store natural dims; ImageBlock rotates + centers itself.
+                  imageBlock = std::make_shared<ImageBlock>(cachedImagePath, dims.width, dims.height);
+                  if (imageBlock) {
+                    const int reserve =
+                        std::max(self->renderer.getScreenWidth() - self->viewportWidth,
+                                 self->renderer.getScreenHeight() - self->viewportHeight);
+                    imageBlock->setRotated(true, static_cast<int16_t>(reserve));
+                  }
+                } else {
+                  // Scale to fit the full viewport, preserving aspect ratio.
+                  // Don't upscale small images beyond their natural size.
+                  const float sx = static_cast<float>(self->viewportWidth) / dims.width;
+                  const float sy = static_cast<float>(self->viewportHeight) / dims.height;
+                  float s = std::min(sx, sy);
+                  if (s > 1.0f) s = 1.0f;
+                  int fitW = static_cast<int>(dims.width * s + 0.5f);
+                  int fitH = static_cast<int>(dims.height * s + 0.5f);
+                  if (fitW < 1) fitW = 1;
+                  if (fitH < 1) fitH = 1;
+                  imageBlock = std::make_shared<ImageBlock>(cachedImagePath,
+                                                            static_cast<int16_t>(fitW),
+                                                            static_cast<int16_t>(fitH));
+                  xPos = (self->viewportWidth - fitW) / 2;
+                  yPos = (self->viewportHeight - fitH) / 2;
+                  if (yPos < 0) yPos = 0;
+                }
                 if (!imageBlock) {
                   LOG_ERR("EHP", "Failed to create ImageBlock");
                   return;
                 }
-                int xPos = (self->viewportWidth - displayWidth) / 2;
-                auto pageImage = std::make_shared<PageImage>(imageBlock, xPos, self->currentPageNextY);
+                auto pageImage = std::make_shared<PageImage>(imageBlock, static_cast<int16_t>(xPos),
+                                                             static_cast<int16_t>(yPos));
                 if (!pageImage) {
                   LOG_ERR("EHP", "Failed to create PageImage");
                   return;
                 }
                 self->currentPage->elements.push_back(pageImage);
-                self->currentPageNextY += displayHeight + imageMarginBottom;
 
-                // The image consumed the empty block's accumulated vertical spacing.
-                // Reset the block so the Vertical merge in startNewTextBlock doesn't
-                // re-apply the same margins to the next text paragraph.
+                // Complete the image's dedicated page; start fresh for following text.
+                self->completePageFn(std::move(self->currentPage), self->xpathParagraphIndex,
+                                     self->xpathListItemIndex);
+                self->completedPageCount++;
+                self->currentPage.reset(new Page());
+                if (!self->currentPage) {
+                  LOG_ERR("EHP", "Failed to create post-image page");
+                  return;
+                }
+                self->currentPageNextY = 0;
+
+                // Reset any empty text block's accumulated vertical spacing.
                 if (self->currentTextBlock && self->currentTextBlock->isEmpty()) {
                   BlockStyle resetStyle;
                   resetStyle.alignment = (self->paragraphAlignment == static_cast<uint8_t>(CssTextAlign::None))
