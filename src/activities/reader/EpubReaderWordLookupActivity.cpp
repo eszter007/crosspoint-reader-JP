@@ -23,6 +23,35 @@ bool isLookupableChar(uint32_t cp) {
   if (cp == 0x30FC) return false;
   if (cp == 0x30FB) return false;
   if (cp == 0x2026 || cp == 0x2025) return false;
+  // Skip common particles/grammar — N5 level, every learner knows these.
+  // They clutter the lookup with unhelpful single-char matches.
+  switch (cp) {
+    case 0x306F: // は
+    case 0x304C: // が
+    case 0x306E: // の
+    case 0x306B: // に
+    case 0x3067: // で
+    case 0x3092: // を
+    case 0x3082: // も
+    case 0x3068: // と
+    case 0x304B: // か
+    case 0x306A: // な
+    case 0x3078: // へ
+    case 0x3088: // よ
+    case 0x306D: // ね
+    case 0x308F: // わ
+    case 0x3066: // て
+    case 0x3060: // だ
+    case 0x305F: // た
+    case 0x3057: // し
+    case 0x3044: // い
+    case 0x3046: // う
+    case 0x304F: // く
+    case 0x3059: // す
+      return false;
+    default:
+      break;
+  }
   if (cp >= 0x3040 && cp <= 0x309F) return true;  // Hiragana
   if (cp >= 0x30A0 && cp <= 0x30FF) return true;  // Katakana
   if (cp >= 0x4E00 && cp <= 0x9FFF) return true;  // CJK Unified
@@ -51,17 +80,54 @@ EpubReaderWordLookupActivity::EpubReaderWordLookupActivity(GfxRenderer& renderer
                                                             const VerticalPage& page)
     : Activity("WordLookup", renderer, mappedInput) {
   allGlyphs.reserve(page.glyphs.size());
-  selectableGlyphs.reserve(page.glyphs.size());
   for (const auto& g : page.glyphs) {
     if (g.renderKind == VerticalGlyph::RotatedRun) continue;
-    // Include all single characters (even rotated punct like ー) in allGlyphs
-    // for lookup text building, but only lookupable chars in selectableGlyphs.
     GlyphRef ref{g.x, g.y, g.column, g.row, g.codepoint, g.paragraphIndex, false};
     allGlyphs.push_back(ref);
-    if (isLookupableChar(g.codepoint)) {
-      selectToAllIdx.push_back(allGlyphs.size() - 1);
-      selectableGlyphs.push_back(ref);
+  }
+
+  // Pre-scan: walk through all characters, do dictionary lookups to find
+  // word boundaries. Only the first character of each matched word becomes
+  // a selectable cursor position. Unmatched lookupable characters are also
+  // selectable (they may be kanji the learner wants to look up).
+  selectableGlyphs.reserve(allGlyphs.size());
+  size_t skipUntil = 0;
+  for (size_t i = 0; i < allGlyphs.size(); i++) {
+    const auto& g = allGlyphs[i];
+    if (!isLookupableChar(g.codepoint)) continue;
+    if (i < skipUntil) continue;
+
+    // Build lookup text from this position
+    std::string text;
+    const uint32_t paraIdx = g.paragraphIndex;
+    int charCount = 0;
+    for (size_t j = i; j < allGlyphs.size() && charCount < kMaxLookupChars; j++) {
+      if (allGlyphs[j].paragraphIndex != paraIdx) break;
+      encodeUtf8(allGlyphs[j].codepoint, text);
+      charCount++;
     }
+
+    // Try dictionary lookup to find match length
+    WordLookupResult result;
+    if (!text.empty() && WordLookup::lookup(text, 0, result)) {
+      // Convert match bytes to character count
+      int matchChars = 0;
+      size_t pos = 0;
+      while (pos < result.matchLength && pos < text.size()) {
+        auto c = static_cast<unsigned char>(text[pos]);
+        if (c < 0x80) pos += 1;
+        else if ((c & 0xE0) == 0xC0) pos += 2;
+        else if ((c & 0xF0) == 0xE0) pos += 3;
+        else pos += 4;
+        matchChars++;
+      }
+      if (matchChars > 1) {
+        skipUntil = i + matchChars;
+      }
+    }
+
+    selectToAllIdx.push_back(i);
+    selectableGlyphs.push_back(g);
   }
 }
 
@@ -75,12 +141,7 @@ void EpubReaderWordLookupActivity::onExit() { Activity::onExit(); }
 void EpubReaderWordLookupActivity::moveCursor(int delta) {
   if (selectableGlyphs.empty()) return;
   int prev = cursorIndex;
-  // When moving forward and we have a match, jump past the matched word
-  if (delta > 0 && hasResult && resultMatchLen > 1) {
-    cursorIndex += resultMatchLen;
-  } else {
-    cursorIndex += delta;
-  }
+  cursorIndex += delta;
   if (cursorIndex < 0) cursorIndex = 0;
   if (cursorIndex >= static_cast<int>(selectableGlyphs.size())) {
     cursorIndex = static_cast<int>(selectableGlyphs.size()) - 1;
@@ -138,7 +199,18 @@ void EpubReaderWordLookupActivity::performLookup() {
     hasResult = true;
     resultHeadword = std::move(result.entry.headword);
     resultDefinition = std::move(result.entry.definition);
-    resultMatchLen = static_cast<int>(result.matchLength);
+    // Convert match length from bytes to character count
+    int chars = 0;
+    size_t pos = 0;
+    while (pos < result.matchLength && pos < text.size()) {
+      auto c = static_cast<unsigned char>(text[pos]);
+      if (c < 0x80) pos += 1;
+      else if ((c & 0xE0) == 0xC0) pos += 2;
+      else if ((c & 0xF0) == 0xE0) pos += 3;
+      else pos += 4;
+      chars++;
+    }
+    resultMatchLen = chars;
   }
 
   requestUpdate();
