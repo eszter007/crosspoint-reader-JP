@@ -9,9 +9,9 @@ bool DictIndex::isAvailable() {
   return Storage.exists(IDX_PATH) && Storage.exists(DAT_PATH);
 }
 
-bool DictIndex::lookupExact(const char* headword, DictEntry& out) {
+bool DictIndex::lookupInFile(const char* headword, const char* idxPath, const char* datPath, DictEntry& out) {
   HalFile idxFile;
-  if (!Storage.openFileForRead("DICT", IDX_PATH, idxFile)) {
+  if (!Storage.openFileForRead("DICT", idxPath, idxFile)) {
     return false;
   }
 
@@ -23,7 +23,6 @@ bool DictIndex::lookupExact(const char* headword, DictEntry& out) {
 
   const size_t recordCount = fileSize / sizeof(DictIndexRecord);
 
-  // Pad the search key to match the fixed-size headword field.
   char key[DictIndexRecord::HEADWORD_SIZE];
   std::memset(key, 0, sizeof(key));
   const size_t len = std::strlen(headword);
@@ -33,7 +32,6 @@ bool DictIndex::lookupExact(const char* headword, DictEntry& out) {
   }
   std::memcpy(key, headword, len);
 
-  // Binary search over the sorted index.
   size_t lo = 0;
   size_t hi = recordCount;
   DictIndexRecord rec;
@@ -53,9 +51,8 @@ bool DictIndex::lookupExact(const char* headword, DictEntry& out) {
     } else {
       idxFile.close();
 
-      // Found — read the definition from the dat file.
       HalFile datFile;
-      if (!Storage.openFileForRead("DICT", DAT_PATH, datFile)) {
+      if (!Storage.openFileForRead("DICT", datPath, datFile)) {
         return false;
       }
 
@@ -76,5 +73,16 @@ bool DictIndex::lookupExact(const char* headword, DictEntry& out) {
   }
 
   idxFile.close();
+  return false;
+}
+
+bool DictIndex::lookupExact(const char* headword, DictEntry& out) {
+  if (lookupInFile(headword, IDX_PATH, DAT_PATH, out)) return true;
+  if (Storage.exists(GRAMMAR_IDX_PATH)) {
+    if (lookupInFile(headword, GRAMMAR_IDX_PATH, GRAMMAR_DAT_PATH, out)) return true;
+  }
+  if (Storage.exists(NAMES_IDX_PATH)) {
+    return lookupInFile(headword, NAMES_IDX_PATH, NAMES_DAT_PATH, out);
+  }
   return false;
 }

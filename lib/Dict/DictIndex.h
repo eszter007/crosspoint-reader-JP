@@ -33,9 +33,15 @@ class DictIndex {
 
   static constexpr const char* IDX_PATH = "/dict/jmdict.idx";
   static constexpr const char* DAT_PATH = "/dict/jmdict.dat";
+  static constexpr const char* NAMES_IDX_PATH = "/dict/jmnedict.idx";
+  static constexpr const char* NAMES_DAT_PATH = "/dict/jmnedict.dat";
+  static constexpr const char* GRAMMAR_IDX_PATH = "/dict/grammar.idx";
+  static constexpr const char* GRAMMAR_DAT_PATH = "/dict/grammar.dat";
 
   // Look up a headword in the index.  Returns true and fills `out` on hit.
-  // On device, reads from SD via HalStorage.  In host tests, reads from
-  // local files via stdio.
+  // Tries JMdict first, then falls back to JMnedict (names dictionary).
   static bool lookupExact(const char* headword, DictEntry& out);
+
+  // Look up in a specific index/dat file pair.
+  static bool lookupInFile(const char* headword, const char* idxPath, const char* datPath, DictEntry& out);
 };
