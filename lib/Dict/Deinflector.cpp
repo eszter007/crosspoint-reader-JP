@@ -162,6 +162,52 @@ static constexpr Rule kRules[] = {
     {"\xe3\x82\x89\xe3\x82\x8c\xe3\x82\x8b", "\xe3\x82\x8b", WordCondition::DICT, WordCondition::V5},  // られる→る
     {"\xe3\x82\x8f\xe3\x82\x8c\xe3\x82\x8b", "\xe3\x81\x86", WordCondition::DICT, WordCondition::V5},  // われる→う
 
+    // Godan passive masu-stem: replace あ-row + れ (continuative before comma, conjunctive)
+    {"\xe3\x81\x8b\xe3\x82\x8c", "\xe3\x81\x8f", WordCondition::DICT, WordCondition::V5},  // かれ→く
+    {"\xe3\x81\x8c\xe3\x82\x8c", "\xe3\x81\x90", WordCondition::DICT, WordCondition::V5},  // がれ→ぐ
+    {"\xe3\x81\x95\xe3\x82\x8c", "\xe3\x81\x99", WordCondition::DICT, WordCondition::V5},  // され→す
+    {"\xe3\x81\x9f\xe3\x82\x8c", "\xe3\x81\xa4", WordCondition::DICT, WordCondition::V5},  // たれ→つ
+    {"\xe3\x81\xaa\xe3\x82\x8c", "\xe3\x81\xac", WordCondition::DICT, WordCondition::V5},  // なれ→ぬ
+    {"\xe3\x81\xb0\xe3\x82\x8c", "\xe3\x81\xb6", WordCondition::DICT, WordCondition::V5},  // ばれ→ぶ
+    {"\xe3\x81\xbe\xe3\x82\x8c", "\xe3\x82\x80", WordCondition::DICT, WordCondition::V5},  // まれ→む
+    {"\xe3\x82\x89\xe3\x82\x8c", "\xe3\x82\x8b", WordCondition::DICT, WordCondition::V5},  // られ→る
+    {"\xe3\x82\x8f\xe3\x82\x8c", "\xe3\x81\x86", WordCondition::DICT, WordCondition::V5},  // われ→う
+
+    // Godan causative masu-stem: replace あ-row + せ
+    {"\xe3\x81\x8b\xe3\x81\x9b", "\xe3\x81\x8f", WordCondition::DICT, WordCondition::V5},  // かせ→く
+    {"\xe3\x81\x8c\xe3\x81\x9b", "\xe3\x81\x90", WordCondition::DICT, WordCondition::V5},  // がせ→ぐ
+    {"\xe3\x81\x95\xe3\x81\x9b", "\xe3\x81\x99", WordCondition::DICT, WordCondition::V5},  // させ→す
+    {"\xe3\x81\x9f\xe3\x81\x9b", "\xe3\x81\xa4", WordCondition::DICT, WordCondition::V5},  // たせ→つ
+    {"\xe3\x81\xaa\xe3\x81\x9b", "\xe3\x81\xac", WordCondition::DICT, WordCondition::V5},  // なせ→ぬ
+    {"\xe3\x81\xb0\xe3\x81\x9b", "\xe3\x81\xb6", WordCondition::DICT, WordCondition::V5},  // ばせ→ぶ
+    {"\xe3\x81\xbe\xe3\x81\x9b", "\xe3\x82\x80", WordCondition::DICT, WordCondition::V5},  // ませ→む
+    {"\xe3\x82\x89\xe3\x81\x9b", "\xe3\x82\x8b", WordCondition::DICT, WordCondition::V5},  // らせ→る
+    {"\xe3\x82\x8f\xe3\x81\x9b", "\xe3\x81\x86", WordCondition::DICT, WordCondition::V5},  // わせ→う
+
+    // Ichidan passive/potential and causative masu-stem
+    {"\xe3\x82\x89\xe3\x82\x8c", "\xe3\x82\x8b", WordCondition::DICT, WordCondition::V1},  // られ→る
+    {"\xe3\x81\x95\xe3\x81\x9b", "\xe3\x82\x8b", WordCondition::DICT, WordCondition::V1},  // させ→る
+
+    // Suru passive/causative masu-stem
+    {"\xe3\x81\x95\xe3\x82\x8c", "\xe3\x81\x99\xe3\x82\x8b", WordCondition::DICT, WordCondition::VS},  // され→する
+    {"\xe3\x81\x95\xe3\x81\x9b", "\xe3\x81\x99\xe3\x82\x8b", WordCondition::DICT, WordCondition::VS},  // させ→する
+
+    // Ichidan masu-stem (連用形): stem appears before commas, auxiliaries.
+    // Add る to try the dictionary form. These え-row endings are common
+    // ichidan stems: め→める, べ→べる, け→ける, etc.
+    {"\xe3\x82\x81", "\xe3\x82\x81\xe3\x82\x8b", WordCondition::DICT, WordCondition::V1},  // め→める
+    {"\xe3\x81\xb9", "\xe3\x81\xb9\xe3\x82\x8b", WordCondition::DICT, WordCondition::V1},  // べ→べる
+    {"\xe3\x81\x91", "\xe3\x81\x91\xe3\x82\x8b", WordCondition::DICT, WordCondition::V1},  // け→ける
+    {"\xe3\x81\x9b", "\xe3\x81\x9b\xe3\x82\x8b", WordCondition::DICT, WordCondition::V1},  // せ→せる
+    {"\xe3\x81\xa6", "\xe3\x81\xa6\xe3\x82\x8b", WordCondition::DICT, WordCondition::V1},  // て→てる
+    {"\xe3\x81\xad", "\xe3\x81\xad\xe3\x82\x8b", WordCondition::DICT, WordCondition::V1},  // ね→ねる
+    {"\xe3\x81\xb8", "\xe3\x81\xb8\xe3\x82\x8b", WordCondition::DICT, WordCondition::V1},  // へ→へる
+    {"\xe3\x82\x8c", "\xe3\x82\x8c\xe3\x82\x8b", WordCondition::DICT, WordCondition::V1},  // れ→れる
+    {"\xe3\x81\x88", "\xe3\x81\x88\xe3\x82\x8b", WordCondition::DICT, WordCondition::V1},  // え→える
+    {"\xe3\x81\x92", "\xe3\x81\x92\xe3\x82\x8b", WordCondition::DICT, WordCondition::V1},  // げ→げる
+    {"\xe3\x81\xa7", "\xe3\x81\xa7\xe3\x82\x8b", WordCondition::DICT, WordCondition::V1},  // で→でる
+    {"\xe3\x81\xbe", "\xe3\x81\xbe\xe3\x82\x8b", WordCondition::DICT, WordCondition::V1},  // ま→まる (not ideal but catches some)
+
     // Godan passive past: replace あ-row + れた
     {"\xe3\x81\x8b\xe3\x82\x8c\xe3\x81\x9f", "\xe3\x81\x8f", WordCondition::DICT, WordCondition::V5},  // かれた→く
     {"\xe3\x81\x8c\xe3\x82\x8c\xe3\x81\x9f", "\xe3\x81\x90", WordCondition::DICT, WordCondition::V5},  // がれた→ぐ

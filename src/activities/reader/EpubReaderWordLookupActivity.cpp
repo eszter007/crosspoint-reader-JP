@@ -161,6 +161,16 @@ EpubReaderWordLookupActivity::EpubReaderWordLookupActivity(GfxRenderer& renderer
 
 void EpubReaderWordLookupActivity::onEnter() {
   Activity::onEnter();
+  // Find first position with a match
+  performLookup();
+  if (!hasResult && !selectableGlyphs.empty()) {
+    const int maxIdx = static_cast<int>(selectableGlyphs.size()) - 1;
+    for (int i = 0; i < 30 && cursorIndex < maxIdx; i++) {
+      cursorIndex++;
+      performLookup();
+      if (hasResult) break;
+    }
+  }
   requestUpdate();
 }
 
