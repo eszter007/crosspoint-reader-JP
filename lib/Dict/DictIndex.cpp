@@ -49,25 +49,66 @@ bool DictIndex::lookupInFile(const char* headword, const char* idxPath, const ch
     } else if (cmp > 0) {
       lo = mid + 1;
     } else {
-      idxFile.close();
+      // Found a match — scan backwards to find the first record with this headword
+      size_t first = mid;
+      while (first > 0) {
+        idxFile.seek((first - 1) * sizeof(DictIndexRecord));
+        DictIndexRecord prevRec;
+        if (idxFile.read(reinterpret_cast<uint8_t*>(&prevRec), sizeof(prevRec)) != sizeof(prevRec)) break;
+        if (std::memcmp(key, prevRec.headword, DictIndexRecord::HEADWORD_SIZE) != 0) break;
+        first--;
+      }
 
+      // Collect all entries with this headword, pick highest priority and merge
       HalFile datFile;
       if (!Storage.openFileForRead("DICT", datPath, datFile)) {
+        idxFile.close();
         return false;
       }
 
-      datFile.seek(rec.offset);
-      std::string def;
-      def.resize(rec.length);
-      if (datFile.read(reinterpret_cast<uint8_t*>(def.data()), rec.length) != rec.length) {
-        datFile.close();
-        return false;
+      struct Entry { std::string def; uint8_t priority; };
+      std::vector<Entry> entries;
+      constexpr int kMaxEntries = 5;
+
+      for (size_t idx = first; idx < recordCount && static_cast<int>(entries.size()) < kMaxEntries; idx++) {
+        idxFile.seek(idx * sizeof(DictIndexRecord));
+        DictIndexRecord r;
+        if (idxFile.read(reinterpret_cast<uint8_t*>(&r), sizeof(r)) != sizeof(r)) break;
+        if (std::memcmp(key, r.headword, DictIndexRecord::HEADWORD_SIZE) != 0) break;
+
+        datFile.seek(r.offset);
+        std::string def;
+        def.resize(r.length);
+        if (datFile.read(reinterpret_cast<uint8_t*>(def.data()), r.length) != static_cast<int>(r.length)) continue;
+
+        entries.push_back({std::move(def), r.priority});
       }
+
       datFile.close();
+      idxFile.close();
+
+      if (entries.empty()) return false;
+
+      // Sort by priority (highest first)
+      for (size_t a = 0; a < entries.size(); a++) {
+        for (size_t b = a + 1; b < entries.size(); b++) {
+          if (entries[b].priority > entries[a].priority) {
+            std::swap(entries[a], entries[b]);
+          }
+        }
+      }
 
       out.headword = headword;
-      out.definition = std::move(def);
-      out.priority = rec.priority;
+      out.priority = entries[0].priority;
+      if (entries.size() == 1) {
+        out.definition = std::move(entries[0].def);
+      } else {
+        // Merge: show best entry, then separator + other entries
+        out.definition = entries[0].def;
+        for (size_t e = 1; e < entries.size(); e++) {
+          out.definition += "\n\n---\n" + entries[e].def;
+        }
+      }
       return true;
     }
   }

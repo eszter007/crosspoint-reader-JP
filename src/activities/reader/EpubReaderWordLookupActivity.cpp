@@ -24,6 +24,9 @@ bool isLookupableChar(uint32_t cp) {
   if (cp == 0x30FC) return false;
   if (cp == 0x30FB) return false;
   if (cp == 0x2026 || cp == 0x2025) return false;
+  // Digits — not useful alone, but included in allGlyphs for compounds like ７歳
+  if (cp >= '0' && cp <= '9') return false;
+  if (cp >= 0xFF10 && cp <= 0xFF19) return false;
   // Skip common particles/grammar — N5 level, every learner knows these.
   // They clutter the lookup with unhelpful single-char matches.
   switch (cp) {
@@ -45,7 +48,7 @@ bool isLookupableChar(uint32_t cp) {
     case 0x3060: // だ
     case 0x305F: // た
     case 0x308B: // る
-      return false;
+    return false;
     default:
       break;
   }
@@ -121,6 +124,27 @@ EpubReaderWordLookupActivity::EpubReaderWordLookupActivity(GfxRenderer& renderer
       }
       if (matchChars > 1) {
         skipUntil = i + matchChars;
+        // If a name match is followed by an honorific, extend skip to include it
+        size_t afterMatch = i + matchChars;
+        if (afterMatch < allGlyphs.size() && allGlyphs[afterMatch].paragraphIndex == paraIdx) {
+          uint32_t nextCp = allGlyphs[afterMatch].codepoint;
+          // さん、くん、ちゃん、さま、氏、様
+          if (nextCp == 0x3055) { // さ → check for さん、さま
+            if (afterMatch + 1 < allGlyphs.size()) {
+              uint32_t nn = allGlyphs[afterMatch + 1].codepoint;
+              if (nn == 0x3093) skipUntil = afterMatch + 2; // さん
+              if (nn == 0x307E && afterMatch + 2 < allGlyphs.size() && allGlyphs[afterMatch + 2].paragraphIndex == paraIdx) skipUntil = afterMatch + 2; // さま
+            }
+          } else if (nextCp == 0x304F) { // く → くん
+            if (afterMatch + 1 < allGlyphs.size() && allGlyphs[afterMatch + 1].codepoint == 0x3093)
+              skipUntil = afterMatch + 2;
+          } else if (nextCp == 0x3061) { // ち → ちゃん
+            if (afterMatch + 2 < allGlyphs.size() && allGlyphs[afterMatch + 1].codepoint == 0x3083 && allGlyphs[afterMatch + 2].codepoint == 0x3093)
+              skipUntil = afterMatch + 3;
+          } else if (nextCp == 0x6C0F || nextCp == 0x69D8) { // 氏、様
+            skipUntil = afterMatch + 1;
+          }
+        }
       }
     }
 
@@ -149,10 +173,8 @@ EpubReaderWordLookupActivity::EpubReaderWordLookupActivity(GfxRenderer& renderer
       }
     }
 
-    // Make this position selectable if:
-    // - it's a lookupable char (kanji, katakana, content hiragana), OR
-    // - it's a filtered particle that starts a grammar pattern
-    if (lookupable || grammarPromoted) {
+    // Only include positions that actually have a dictionary match
+    if ((lookupable && hasMatch) || grammarPromoted) {
       selectToAllIdx.push_back(i);
       selectableGlyphs.push_back(g);
     }
@@ -162,15 +184,12 @@ EpubReaderWordLookupActivity::EpubReaderWordLookupActivity(GfxRenderer& renderer
 void EpubReaderWordLookupActivity::onEnter() {
   Activity::onEnter();
   // Find first position with a match
-  performLookup();
-  if (!hasResult && !selectableGlyphs.empty()) {
-    const int maxIdx = static_cast<int>(selectableGlyphs.size()) - 1;
-    for (int i = 0; i < 30 && cursorIndex < maxIdx; i++) {
-      cursorIndex++;
-      performLookup();
-      if (hasResult) break;
-    }
+  const int maxIdx = static_cast<int>(selectableGlyphs.size()) - 1;
+  for (cursorIndex = 0; cursorIndex <= maxIdx; cursorIndex++) {
+    performLookup();
+    if (hasResult) break;
   }
+  if (cursorIndex > maxIdx) cursorIndex = 0;
   requestUpdate();
 }
 
@@ -232,6 +251,8 @@ void EpubReaderWordLookupActivity::performLookup() {
   resultHeadword.clear();
   resultDefinition.clear();
   resultMatchLen = 0;
+  scrollOffset = 0;
+  totalLines = 9999;
 
   std::string text = buildLookupText(static_cast<size_t>(cursorIndex));
   if (text.empty()) return;
@@ -331,6 +352,12 @@ void EpubReaderWordLookupActivity::performLookup() {
     }
   }
 
+  // Merge grammar into the definition so the single scroll-aware render loop
+  // handles it (gets maxDefY clamping and scroll offset for free).
+  if (hasGrammar) {
+    resultDefinition += "\n\n— Grammar: " + grammarHeadword + " —\n" + grammarDefinition;
+  }
+
   requestUpdate();
 }
 
@@ -350,34 +377,49 @@ void EpubReaderWordLookupActivity::loop() {
 
   buttonNavigator.onPressAndContinuous({MappedInputManager::Button::Down}, [this] { moveCursor(1); });
   buttonNavigator.onPressAndContinuous({MappedInputManager::Button::Up}, [this] { moveCursor(-1); });
-  buttonNavigator.onPressAndContinuous({MappedInputManager::Button::Right}, [this] { moveCursor(10); });
-  buttonNavigator.onPressAndContinuous({MappedInputManager::Button::Left}, [this] { moveCursor(-10); });
+  buttonNavigator.onPressAndContinuous({MappedInputManager::Button::Right}, [this] {
+    if (hasResult && scrollOffset < maxScroll) { scrollOffset = std::min(maxScroll, scrollOffset + 5); requestUpdate(); }
+  });
+  buttonNavigator.onPressAndContinuous({MappedInputManager::Button::Left}, [this] {
+    if (scrollOffset > 0) { scrollOffset = std::max(0, scrollOffset - 5); requestUpdate(); }
+  });
 }
 
 void EpubReaderWordLookupActivity::renderContentArea(const Rect& screen, int contentTop) {
   auto metrics = UITheme::getInstance().getMetrics();
   const int jaFont = SETTINGS.getReaderFontId();
 
-  if (selectableGlyphs.empty()) {
+  if (selectableGlyphs.empty() || !hasResult) {
     UITheme::drawCenteredText(renderer, screen, UI_12_FONT_ID,
                               screen.y + screen.height / 2, tr(STR_NO_MATCH), true);
-  } else if (hasResult) {
+  } else {
     const int maxWidth = screen.width - metrics.contentSidePadding * 2;
     const int textX = screen.x + metrics.contentSidePadding;
 
     std::string posText = std::to_string(cursorIndex + 1) + "/" + std::to_string(selectableGlyphs.size());
-    renderer.drawText(SMALL_FONT_ID, textX, contentTop, posText.c_str(), true);
+    int defY;
 
-    int headY = contentTop + renderer.getLineHeight(SMALL_FONT_ID) + 2;
-    renderer.drawText(jaFont, textX, headY, resultHeadword.c_str(), true, EpdFontFamily::BOLD);
-
-    int defY = headY + renderer.getLineHeight(jaFont) + metrics.verticalSpacing;
+    if (scrollOffset == 0) {
+      renderer.drawText(SMALL_FONT_ID, textX, contentTop, posText.c_str(), true);
+      int headY = contentTop + renderer.getLineHeight(SMALL_FONT_ID) + 2;
+      renderer.drawText(jaFont, textX, headY, resultHeadword.c_str(), true, EpdFontFamily::BOLD);
+      defY = headY + renderer.getLineHeight(jaFont) + metrics.verticalSpacing;
+    } else {
+      // When scrolled, skip the header to show more definition
+      std::string scrollInfo = resultHeadword + " (" + posText + ") \xe2\x96\xb2";
+      renderer.drawText(SMALL_FONT_ID, textX, contentTop, scrollInfo.c_str(), true);
+      defY = contentTop + renderer.getLineHeight(SMALL_FONT_ID) + 4;
+    }
 
     const int defFont = SMALL_FONT_ID;
     const int defLineH = renderer.getLineHeight(defFont);
-    // Split on newlines first, then wrap each line individually
     int linesDrawn = 0;
-    constexpr int kMaxDefLines = 20;
+    int lineIndex = 0;
+    // screen.height already excludes the button-hints band, so its bottom edge
+    // is the top of the buttons; stay a hair above it.
+    const int maxDefY = screen.y + screen.height - 2;
+    const int firstDefY = defY;
+    const int kMaxDefLines = 999;
     std::string defText = resultDefinition;
     size_t nlPos = 0;
     while (nlPos <= defText.size() && linesDrawn < kMaxDefLines) {
@@ -387,7 +429,8 @@ void EpubReaderWordLookupActivity::renderContentArea(const Rect& screen, int con
       nlPos = (nextNl == std::string::npos) ? defText.size() + 1 : nextNl + 1;
 
       if (paragraph.empty()) {
-        defY += defLineH / 2;
+        lineIndex++;
+        if (lineIndex > scrollOffset) defY += defLineH / 2;
         continue;
       }
       // Try space-based wrapping first (for Latin text), then fall back to
@@ -395,9 +438,12 @@ void EpubReaderWordLookupActivity::renderContentArea(const Rect& screen, int con
       std::string rem = paragraph;
       while (!rem.empty() && linesDrawn < kMaxDefLines) {
         if (renderer.getTextWidth(defFont, rem.c_str()) <= maxWidth) {
-          renderer.drawText(defFont, textX, defY, rem.c_str(), true);
-          defY += defLineH;
-          linesDrawn++;
+          lineIndex++;
+          if (lineIndex > scrollOffset && defY + defLineH <= maxDefY) {
+            renderer.drawText(defFont, textX, defY, rem.c_str(), true);
+            defY += defLineH;
+            linesDrawn++;
+          }
           break;
         }
         // Try to break at the last space that fits
@@ -446,57 +492,19 @@ void EpubReaderWordLookupActivity::renderContentArea(const Rect& screen, int con
           // No space found — break at character boundary (CJK text)
           rem = rem.substr(accum.size());
         }
-        renderer.drawText(defFont, textX, defY, accum.c_str(), true);
-        defY += defLineH;
-        linesDrawn++;
-      }
-    }
-
-    if (hasGrammar) {
-      defY += defLineH / 2;
-      std::string gramHeader = "Grammar: " + grammarHeadword;
-      renderer.drawText(defFont, textX, defY, gramHeader.c_str(), true, EpdFontFamily::BOLD);
-      defY += defLineH;
-
-      std::string gramDef = grammarDefinition;
-      size_t gnlPos = 0;
-      while (gnlPos <= gramDef.size() && linesDrawn < kMaxDefLines) {
-        size_t nextNl = gramDef.find('\n', gnlPos);
-        std::string para = (nextNl == std::string::npos)
-            ? gramDef.substr(gnlPos) : gramDef.substr(gnlPos, nextNl - gnlPos);
-        gnlPos = (nextNl == std::string::npos) ? gramDef.size() + 1 : nextNl + 1;
-        if (para.empty()) continue;
-        if (renderer.getTextWidth(defFont, para.c_str()) <= maxWidth) {
-          renderer.drawText(defFont, textX, defY, para.c_str(), true);
+        lineIndex++;
+        if (lineIndex > scrollOffset && defY + defLineH <= maxDefY) {
+          renderer.drawText(defFont, textX, defY, accum.c_str(), true);
           defY += defLineH;
           linesDrawn++;
-        } else {
-          auto wrapped = renderer.wrappedText(defFont, para.c_str(), maxWidth, kMaxDefLines - linesDrawn);
-          for (const auto& wl : wrapped) {
-            renderer.drawText(defFont, textX, defY, wl.c_str(), true);
-            defY += defLineH;
-            linesDrawn++;
-            if (linesDrawn >= kMaxDefLines) break;
-          }
         }
       }
     }
-  } else {
-    std::string preview;
-    encodeUtf8(selectableGlyphs[cursorIndex].codepoint, preview);
 
-    std::string posText = std::to_string(cursorIndex + 1) + "/" + std::to_string(selectableGlyphs.size());
-    UITheme::drawCenteredText(renderer, screen, jaFont, contentTop, preview.c_str(), true,
-                              EpdFontFamily::BOLD);
-    UITheme::drawCenteredText(renderer, screen, SMALL_FONT_ID,
-                              contentTop + renderer.getLineHeight(jaFont) + 4, posText.c_str(), true);
-
-    std::string windowPreview = buildLookupText(static_cast<size_t>(cursorIndex));
-    if (!windowPreview.empty()) {
-      UITheme::drawCenteredText(renderer, screen, jaFont,
-                                contentTop + renderer.getLineHeight(jaFont) + 30, windowPreview.c_str(),
-                                true);
-    }
+    totalLines = lineIndex;
+    // Leave at least a screenful visible: max scroll = total - capacity
+    const int visibleCapacity = (maxDefY - firstDefY) / defLineH;
+    maxScroll = std::max(0, totalLines - visibleCapacity);
   }
 }
 
@@ -524,7 +532,12 @@ void EpubReaderWordLookupActivity::render(RenderLock&&) {
     initialRenderDone = true;
     fastRefreshCount = 0;
   } else {
-    renderer.fillRect(screen.x, contentTop, screen.width, contentBottom - contentTop, false);
+    // Clear from content top all the way to the physical bottom (including the
+    // button-hint band margins, which screen.height excludes), then redraw hints.
+    const int physBottom = renderer.getScreenHeight();
+    renderer.fillRect(0, contentTop, renderer.getScreenWidth(), physBottom - contentTop, false);
+    const auto labels2 = mappedInput.mapLabels(tr(STR_BACK), tr(STR_SELECT), tr(STR_DIR_UP), tr(STR_DIR_DOWN));
+    GUI.drawButtonHints(renderer, labels2.btn1, labels2.btn2, labels2.btn3, labels2.btn4);
 
     renderContentArea(screen, contentTop);
 

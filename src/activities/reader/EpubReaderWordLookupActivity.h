@@ -44,6 +44,9 @@ class EpubReaderWordLookupActivity final : public Activity {
   bool hasGrammar = false;
   std::string grammarHeadword;
   std::string grammarDefinition;
+  int scrollOffset = 0;  // lines scrolled within current entry
+  int totalLines = 0;    // total lines in current definition
+  int maxScroll = 0;     // max scroll offset (leaves a screenful visible)
 
   ButtonNavigator buttonNavigator;
 

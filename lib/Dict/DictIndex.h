@@ -39,9 +39,10 @@ class DictIndex {
   static constexpr const char* GRAMMAR_DAT_PATH = "/dict/grammar.dat";
 
   // Look up a headword in the index.  Returns true and fills `out` on hit.
-  // Tries JMdict first, then falls back to JMnedict (names dictionary).
+  // Collects all readings from all dictionaries into a single definition.
   static bool lookupExact(const char* headword, DictEntry& out);
 
-  // Look up in a specific index/dat file pair.
+  // Look up in a specific index/dat file pair. Collects ALL entries with
+  // the same headword (scanning adjacent records) and merges definitions.
   static bool lookupInFile(const char* headword, const char* idxPath, const char* datPath, DictEntry& out);
 };
