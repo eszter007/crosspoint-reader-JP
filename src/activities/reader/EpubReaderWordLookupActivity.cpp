@@ -2,6 +2,7 @@
 
 #include <DictIndex.h>
 #include <GfxRenderer.h>
+#include <HalStorage.h>
 #include <I18n.h>
 #include <WordLookup.h>
 
@@ -43,11 +44,7 @@ bool isLookupableChar(uint32_t cp) {
     case 0x3066: // て
     case 0x3060: // だ
     case 0x305F: // た
-    case 0x3057: // し
-    case 0x3044: // い
-    case 0x3046: // う
-    case 0x304F: // く
-    case 0x3059: // す
+    case 0x308B: // る
       return false;
     default:
       break;
@@ -87,15 +84,16 @@ EpubReaderWordLookupActivity::EpubReaderWordLookupActivity(GfxRenderer& renderer
   }
 
   // Pre-scan: walk through all characters, do dictionary lookups to find
-  // word boundaries. Only the first character of each matched word becomes
-  // a selectable cursor position. Unmatched lookupable characters are also
-  // selectable (they may be kanji the learner wants to look up).
+  // word boundaries. Characters inside a matched word are skipped.
+  // Filtered particles (は、が etc.) are still checked — if they start a
+  // multi-char match (e.g. という, ことになる), they become selectable.
   selectableGlyphs.reserve(allGlyphs.size());
   size_t skipUntil = 0;
   for (size_t i = 0; i < allGlyphs.size(); i++) {
     const auto& g = allGlyphs[i];
-    if (!isLookupableChar(g.codepoint)) continue;
     if (i < skipUntil) continue;
+
+    const bool lookupable = isLookupableChar(g.codepoint);
 
     // Build lookup text from this position
     std::string text;
@@ -109,9 +107,9 @@ EpubReaderWordLookupActivity::EpubReaderWordLookupActivity(GfxRenderer& renderer
 
     // Try dictionary lookup to find match length
     WordLookupResult result;
-    if (!text.empty() && WordLookup::lookup(text, 0, result)) {
-      // Convert match bytes to character count
-      int matchChars = 0;
+    bool hasMatch = !text.empty() && WordLookup::lookup(text, 0, result);
+    int matchChars = 0;
+    if (hasMatch) {
       size_t pos = 0;
       while (pos < result.matchLength && pos < text.size()) {
         auto c = static_cast<unsigned char>(text[pos]);
@@ -126,8 +124,38 @@ EpubReaderWordLookupActivity::EpubReaderWordLookupActivity(GfxRenderer& renderer
       }
     }
 
-    selectToAllIdx.push_back(i);
-    selectableGlyphs.push_back(g);
+    // For filtered particles, only promote if a grammar dictionary match exists
+    bool grammarPromoted = false;
+    if (!lookupable && charCount >= 2 && Storage.exists(DictIndex::GRAMMAR_IDX_PATH)) {
+      for (int wLen = std::min(charCount, 10); wLen >= 2; wLen--) {
+        size_t byteEnd = 0;
+        int cnt = 0;
+        for (size_t b = 0; b < text.size() && cnt < wLen; cnt++) {
+          auto c = static_cast<unsigned char>(text[b]);
+          if (c < 0x80) b += 1;
+          else if ((c & 0xE0) == 0xC0) b += 2;
+          else if ((c & 0xF0) == 0xE0) b += 3;
+          else b += 4;
+          byteEnd = b;
+        }
+        std::string window = text.substr(0, byteEnd);
+        DictEntry gramEntry;
+        if (DictIndex::lookupInFile(window.c_str(), DictIndex::GRAMMAR_IDX_PATH,
+                                     DictIndex::GRAMMAR_DAT_PATH, gramEntry)) {
+          grammarPromoted = true;
+          if (wLen > 1) skipUntil = i + wLen;
+          break;
+        }
+      }
+    }
+
+    // Make this position selectable if:
+    // - it's a lookupable char (kanji, katakana, content hiragana), OR
+    // - it's a filtered particle that starts a grammar pattern
+    if (lookupable || grammarPromoted) {
+      selectToAllIdx.push_back(i);
+      selectableGlyphs.push_back(g);
+    }
   }
 }
 
@@ -140,14 +168,18 @@ void EpubReaderWordLookupActivity::onExit() { Activity::onExit(); }
 
 void EpubReaderWordLookupActivity::moveCursor(int delta) {
   if (selectableGlyphs.empty()) return;
-  int prev = cursorIndex;
-  cursorIndex += delta;
-  if (cursorIndex < 0) cursorIndex = 0;
-  if (cursorIndex >= static_cast<int>(selectableGlyphs.size())) {
-    cursorIndex = static_cast<int>(selectableGlyphs.size()) - 1;
+  const int maxIdx = static_cast<int>(selectableGlyphs.size()) - 1;
+  const int step = (delta > 0) ? 1 : -1;
+  const int startIdx = cursorIndex;
+
+  for (int attempts = 0; attempts < 30; attempts++) {
+    cursorIndex += (attempts == 0) ? delta : step;
+    if (cursorIndex < 0) { cursorIndex = 0; performLookup(); return; }
+    if (cursorIndex > maxIdx) { cursorIndex = maxIdx; performLookup(); return; }
+    if (cursorIndex == startIdx) { performLookup(); return; }
+    performLookup();
+    if (hasResult) return;
   }
-  if (cursorIndex == prev) return;
-  performLookup();
 }
 
 void EpubReaderWordLookupActivity::encodeUtf8(uint32_t cp, std::string& out) {
@@ -199,7 +231,6 @@ void EpubReaderWordLookupActivity::performLookup() {
     hasResult = true;
     resultHeadword = std::move(result.entry.headword);
     resultDefinition = std::move(result.entry.definition);
-    // Convert match length from bytes to character count
     int chars = 0;
     size_t pos = 0;
     while (pos < result.matchLength && pos < text.size()) {
@@ -211,6 +242,83 @@ void EpubReaderWordLookupActivity::performLookup() {
       chars++;
     }
     resultMatchLen = chars;
+
+    // For short hiragana-only matches (≤3 chars), check if the grammar dict
+    // has a better entry and promote it to the main result. Functional words
+    // like こと, もの, よう get unhelpful JMdict hits ("ancient capital").
+    if (chars <= 3 && Storage.exists(DictIndex::GRAMMAR_IDX_PATH)) {
+      bool allHiragana = true;
+      for (size_t b = 0; b < result.matchLength && b < text.size();) {
+        auto c = static_cast<unsigned char>(text[b]);
+        uint32_t cp = 0;
+        if (c < 0x80) { cp = c; b += 1; }
+        else if ((c & 0xE0) == 0xC0) { cp = ((c & 0x1F) << 6) | (text[b+1] & 0x3F); b += 2; }
+        else if ((c & 0xF0) == 0xE0) { cp = ((c & 0x0F) << 12) | ((text[b+1] & 0x3F) << 6) | (text[b+2] & 0x3F); b += 3; }
+        else { b += 4; }
+        if (cp < 0x3040 || cp > 0x309F) { allHiragana = false; break; }
+      }
+      if (allHiragana) {
+        DictEntry gramEntry;
+        if (DictIndex::lookupInFile(resultHeadword.c_str(), DictIndex::GRAMMAR_IDX_PATH,
+                                     DictIndex::GRAMMAR_DAT_PATH, gramEntry)) {
+          resultDefinition = std::move(gramEntry.definition);
+        }
+      }
+    }
+  }
+
+  // Grammar scan: search for grammar patterns in a window around the cursor.
+  // Try starting from a few characters BEFORE the cursor (to catch patterns
+  // like ことになる when cursor is on こと) and also from the cursor itself.
+  hasGrammar = false;
+  grammarHeadword.clear();
+  grammarDefinition.clear();
+  if (Storage.exists(DictIndex::GRAMMAR_IDX_PATH)) {
+    const size_t allStart = selectToAllIdx[static_cast<size_t>(cursorIndex)];
+    const uint32_t paraIdx = allGlyphs[allStart].paragraphIndex;
+
+    // Try starting positions: cursor-3, cursor-2, cursor-1, cursor
+    int bestGramLen = 0;
+    for (int backoff = 3; backoff >= 0; backoff--) {
+      size_t scanStart = allStart;
+      for (int b = 0; b < backoff && scanStart > 0; b++) {
+        scanStart--;
+        if (allGlyphs[scanStart].paragraphIndex != paraIdx) { scanStart++; break; }
+      }
+
+      std::string gramText;
+      int gCharCount = 0;
+      for (size_t j = scanStart; j < allGlyphs.size() && gCharCount < 12; j++) {
+        if (allGlyphs[j].paragraphIndex != paraIdx) break;
+        encodeUtf8(allGlyphs[j].codepoint, gramText);
+        gCharCount++;
+      }
+
+      for (int wLen = std::min(gCharCount, 10); wLen >= 2; wLen--) {
+        size_t byteEnd = 0;
+        int cnt = 0;
+        for (size_t b = 0; b < gramText.size() && cnt < wLen; cnt++) {
+          auto c = static_cast<unsigned char>(gramText[b]);
+          if (c < 0x80) b += 1;
+          else if ((c & 0xE0) == 0xC0) b += 2;
+          else if ((c & 0xF0) == 0xE0) b += 3;
+          else b += 4;
+          byteEnd = b;
+        }
+        std::string window = gramText.substr(0, byteEnd);
+        DictEntry gramEntry;
+        if (DictIndex::lookupInFile(window.c_str(), DictIndex::GRAMMAR_IDX_PATH,
+                                     DictIndex::GRAMMAR_DAT_PATH, gramEntry)) {
+          if (gramEntry.headword != resultHeadword && wLen > bestGramLen) {
+            bestGramLen = wLen;
+            hasGrammar = true;
+            grammarHeadword = std::move(gramEntry.headword);
+            grammarDefinition = std::move(gramEntry.definition);
+          }
+          break;
+        }
+      }
+    }
   }
 
   requestUpdate();
@@ -334,7 +442,35 @@ void EpubReaderWordLookupActivity::renderContentArea(const Rect& screen, int con
       }
     }
 
-    // Attribution is shown in the header instead
+    if (hasGrammar) {
+      defY += defLineH / 2;
+      std::string gramHeader = "Grammar: " + grammarHeadword;
+      renderer.drawText(defFont, textX, defY, gramHeader.c_str(), true, EpdFontFamily::BOLD);
+      defY += defLineH;
+
+      std::string gramDef = grammarDefinition;
+      size_t gnlPos = 0;
+      while (gnlPos <= gramDef.size() && linesDrawn < kMaxDefLines) {
+        size_t nextNl = gramDef.find('\n', gnlPos);
+        std::string para = (nextNl == std::string::npos)
+            ? gramDef.substr(gnlPos) : gramDef.substr(gnlPos, nextNl - gnlPos);
+        gnlPos = (nextNl == std::string::npos) ? gramDef.size() + 1 : nextNl + 1;
+        if (para.empty()) continue;
+        if (renderer.getTextWidth(defFont, para.c_str()) <= maxWidth) {
+          renderer.drawText(defFont, textX, defY, para.c_str(), true);
+          defY += defLineH;
+          linesDrawn++;
+        } else {
+          auto wrapped = renderer.wrappedText(defFont, para.c_str(), maxWidth, kMaxDefLines - linesDrawn);
+          for (const auto& wl : wrapped) {
+            renderer.drawText(defFont, textX, defY, wl.c_str(), true);
+            defY += defLineH;
+            linesDrawn++;
+            if (linesDrawn >= kMaxDefLines) break;
+          }
+        }
+      }
+    }
   } else {
     std::string preview;
     encodeUtf8(selectableGlyphs[cursorIndex].codepoint, preview);

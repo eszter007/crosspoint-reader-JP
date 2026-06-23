@@ -162,6 +162,27 @@ static constexpr Rule kRules[] = {
     {"\xe3\x82\x89\xe3\x82\x8c\xe3\x82\x8b", "\xe3\x82\x8b", WordCondition::DICT, WordCondition::V5},  // られる→る
     {"\xe3\x82\x8f\xe3\x82\x8c\xe3\x82\x8b", "\xe3\x81\x86", WordCondition::DICT, WordCondition::V5},  // われる→う
 
+    // Godan passive past: replace あ-row + れた
+    {"\xe3\x81\x8b\xe3\x82\x8c\xe3\x81\x9f", "\xe3\x81\x8f", WordCondition::DICT, WordCondition::V5},  // かれた→く
+    {"\xe3\x81\x8c\xe3\x82\x8c\xe3\x81\x9f", "\xe3\x81\x90", WordCondition::DICT, WordCondition::V5},  // がれた→ぐ
+    {"\xe3\x81\x95\xe3\x82\x8c\xe3\x81\x9f", "\xe3\x81\x99", WordCondition::DICT, WordCondition::V5},  // された→す
+    {"\xe3\x81\x9f\xe3\x82\x8c\xe3\x81\x9f", "\xe3\x81\xa4", WordCondition::DICT, WordCondition::V5},  // たれた→つ
+    {"\xe3\x81\xaa\xe3\x82\x8c\xe3\x81\x9f", "\xe3\x81\xac", WordCondition::DICT, WordCondition::V5},  // なれた→ぬ
+    {"\xe3\x81\xb0\xe3\x82\x8c\xe3\x81\x9f", "\xe3\x81\xb6", WordCondition::DICT, WordCondition::V5},  // ばれた→ぶ
+    {"\xe3\x81\xbe\xe3\x82\x8c\xe3\x81\x9f", "\xe3\x82\x80", WordCondition::DICT, WordCondition::V5},  // まれた→む
+    {"\xe3\x82\x89\xe3\x82\x8c\xe3\x81\x9f", "\xe3\x82\x8b", WordCondition::DICT, WordCondition::V5},  // られた→る
+    {"\xe3\x82\x8f\xe3\x82\x8c\xe3\x81\x9f", "\xe3\x81\x86", WordCondition::DICT, WordCondition::V5},  // われた→う
+    // Godan passive te-form: replace あ-row + れて
+    {"\xe3\x81\x8b\xe3\x82\x8c\xe3\x81\xa6", "\xe3\x81\x8f", WordCondition::DICT, WordCondition::V5},  // かれて→く
+    {"\xe3\x81\x8c\xe3\x82\x8c\xe3\x81\xa6", "\xe3\x81\x90", WordCondition::DICT, WordCondition::V5},  // がれて→ぐ
+    {"\xe3\x81\x95\xe3\x82\x8c\xe3\x81\xa6", "\xe3\x81\x99", WordCondition::DICT, WordCondition::V5},  // されて→す
+    {"\xe3\x81\x9f\xe3\x82\x8c\xe3\x81\xa6", "\xe3\x81\xa4", WordCondition::DICT, WordCondition::V5},  // たれて→つ
+    {"\xe3\x81\xaa\xe3\x82\x8c\xe3\x81\xa6", "\xe3\x81\xac", WordCondition::DICT, WordCondition::V5},  // なれて→ぬ
+    {"\xe3\x81\xb0\xe3\x82\x8c\xe3\x81\xa6", "\xe3\x81\xb6", WordCondition::DICT, WordCondition::V5},  // ばれて→ぶ
+    {"\xe3\x81\xbe\xe3\x82\x8c\xe3\x81\xa6", "\xe3\x82\x80", WordCondition::DICT, WordCondition::V5},  // まれて→む
+    {"\xe3\x82\x89\xe3\x82\x8c\xe3\x81\xa6", "\xe3\x82\x8b", WordCondition::DICT, WordCondition::V5},  // られて→る
+    {"\xe3\x82\x8f\xe3\x82\x8c\xe3\x81\xa6", "\xe3\x81\x86", WordCondition::DICT, WordCondition::V5},  // われて→う
+
     // Godan causative: replace あ-row + せる
     {"\xe3\x81\x8b\xe3\x81\x9b\xe3\x82\x8b", "\xe3\x81\x8f", WordCondition::DICT, WordCondition::V5},  // かせる→く
     {"\xe3\x81\x8c\xe3\x81\x9b\xe3\x82\x8b", "\xe3\x81\x90", WordCondition::DICT, WordCondition::V5},  // がせる→ぐ
@@ -172,6 +193,14 @@ static constexpr Rule kRules[] = {
     {"\xe3\x81\xbe\xe3\x81\x9b\xe3\x82\x8b", "\xe3\x82\x80", WordCondition::DICT, WordCondition::V5},  // ませる→む
     {"\xe3\x82\x89\xe3\x81\x9b\xe3\x82\x8b", "\xe3\x82\x8b", WordCondition::DICT, WordCondition::V5},  // らせる→る
     {"\xe3\x82\x8f\xe3\x81\x9b\xe3\x82\x8b", "\xe3\x81\x86", WordCondition::DICT, WordCondition::V5},  // わせる→う
+
+    // Godan causative past: replace あ-row + せた
+    {"\xe3\x81\x8b\xe3\x81\x9b\xe3\x81\x9f", "\xe3\x81\x8f", WordCondition::DICT, WordCondition::V5},  // かせた→く
+    {"\xe3\x81\x8c\xe3\x81\x9b\xe3\x81\x9f", "\xe3\x81\x90", WordCondition::DICT, WordCondition::V5},  // がせた→ぐ
+    {"\xe3\x81\x95\xe3\x81\x9b\xe3\x81\x9f", "\xe3\x81\x99", WordCondition::DICT, WordCondition::V5},  // させた→す
+    {"\xe3\x81\x9f\xe3\x81\x9b\xe3\x81\x9f", "\xe3\x81\xa4", WordCondition::DICT, WordCondition::V5},  // たせた→つ
+    {"\xe3\x82\x89\xe3\x81\x9b\xe3\x81\x9f", "\xe3\x82\x8b", WordCondition::DICT, WordCondition::V5},  // らせた→る
+    {"\xe3\x82\x8f\xe3\x81\x9b\xe3\x81\x9f", "\xe3\x81\x86", WordCondition::DICT, WordCondition::V5},  // わせた→う
 
     // Godan potential: replace え-row + る
     {"\xe3\x81\x91\xe3\x82\x8b", "\xe3\x81\x8f", WordCondition::DICT, WordCondition::V5},  // ける→く
@@ -198,7 +227,11 @@ static constexpr Rule kRules[] = {
     {"\xe3\x81\x97\xe3\x81\xaa\xe3\x81\x84", "\xe3\x81\x99\xe3\x82\x8b", WordCondition::DICT, WordCondition::VS},  // しない→する
     {"\xe3\x81\x97\xe3\x81\xbe\xe3\x81\x99", "\xe3\x81\x99\xe3\x82\x8b", WordCondition::DICT, WordCondition::VS},  // します→する
     {"\xe3\x81\x95\xe3\x82\x8c\xe3\x82\x8b", "\xe3\x81\x99\xe3\x82\x8b", WordCondition::DICT, WordCondition::VS},  // される→する
+    {"\xe3\x81\x95\xe3\x82\x8c\xe3\x81\x9f", "\xe3\x81\x99\xe3\x82\x8b", WordCondition::DICT, WordCondition::VS},  // された→する
+    {"\xe3\x81\x95\xe3\x82\x8c\xe3\x81\xa6", "\xe3\x81\x99\xe3\x82\x8b", WordCondition::DICT, WordCondition::VS},  // されて→する
     {"\xe3\x81\x95\xe3\x81\x9b\xe3\x82\x8b", "\xe3\x81\x99\xe3\x82\x8b", WordCondition::DICT, WordCondition::VS},  // させる→する
+    {"\xe3\x81\x95\xe3\x81\x9b\xe3\x81\x9f", "\xe3\x81\x99\xe3\x82\x8b", WordCondition::DICT, WordCondition::VS},  // させた→する
+    {"\xe3\x81\x95\xe3\x81\x9b\xe3\x81\xa6", "\xe3\x81\x99\xe3\x82\x8b", WordCondition::DICT, WordCondition::VS},  // させて→する
     {"\xe3\x81\xa7\xe3\x81\x8d\xe3\x82\x8b", "\xe3\x81\x99\xe3\x82\x8b", WordCondition::DICT, WordCondition::VS},  // できる→する
     {"\xe3\x81\x97\xe3\x82\x88\xe3\x81\x86", "\xe3\x81\x99\xe3\x82\x8b", WordCondition::DICT, WordCondition::VS},  // しよう→する
     {"\xe3\x81\x99\xe3\x82\x8c\xe3\x81\xb0", "\xe3\x81\x99\xe3\x82\x8b", WordCondition::DICT, WordCondition::VS},  // すれば→する

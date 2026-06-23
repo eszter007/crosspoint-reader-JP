@@ -41,6 +41,9 @@ class EpubReaderWordLookupActivity final : public Activity {
   std::string resultHeadword;
   std::string resultDefinition;
   int resultMatchLen = 0;
+  bool hasGrammar = false;
+  std::string grammarHeadword;
+  std::string grammarDefinition;
 
   ButtonNavigator buttonNavigator;
 
