@@ -490,7 +490,9 @@ std::vector<VerticalPage> VerticalParsedText::layoutPages() {
         }
 
         const int topY = row * cellPx;
-        const int numericRotatedDownNudge = std::max(8, (cellPx * 9) / 10);
+        const int fontPctRun = (cellPx > 0) ? (ascender * 100 / cellPx) : 100;
+        const int runExtraNudge = (fontPctRun > 100) ? (cellPx * (fontPctRun - 100) / 30) : 0;
+        const int numericRotatedDownNudge = std::max(8, (cellPx * 9) / 10) + runExtraNudge * 2;
         VerticalGlyph g;
         g.codepoint = 0;
         g.column = column;

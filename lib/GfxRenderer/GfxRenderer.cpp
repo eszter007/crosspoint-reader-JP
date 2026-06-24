@@ -1700,8 +1700,18 @@ void GfxRenderer::drawCharVerticalRotatedInCell(const int fontId, const int cell
     const int dotSize = std::max(1, cellSize / 10);
     const int gap = std::max(1, cellSize / 10);
     const int totalH = dotCount * dotSize + (dotCount - 1) * gap;
-    int startY = cellTopY + std::max(1, cellSize / 3) + cellSize / 3;
-    const int maxStartY = cellTopY + std::max(1, cellSize - totalH - 1);
+    // Font-adaptive nudge for ellipsis (same logic as brackets)
+    const auto fontIt2 = fontMap.find(fontId);
+    int ellipsisExtra = 0;
+    if (fontIt2 != fontMap.end()) {
+      const EpdFontData* fd = fontIt2->second.getData(style);
+      if (fd && cellSize > 0) {
+        const int pct = fd->ascender * 100 / cellSize;
+        if (pct > 100) ellipsisExtra = cellSize * (pct - 100) / 30;
+      }
+    }
+    int startY = cellTopY + std::max(1, cellSize / 3) + cellSize / 3 + ellipsisExtra;
+    const int maxStartY = cellTopY + std::max(1, cellSize - totalH - 1) + ellipsisExtra;
     if (startY > maxStartY) startY = maxStartY;
     const int startX = cellLeftX + (cellSize - dotSize) / 2;
     for (int i = 0; i < dotCount; i++) {
@@ -1724,22 +1734,28 @@ void GfxRenderer::drawCharVerticalRotatedInCell(const int fontId, const int cell
   const int rotatedW = glyph->height;
   const int rotatedH = glyph->width;
 
-  int drawX = cellLeftX + (cellSize - rotatedW) / 2;
-  int drawY = cellTopY + (cellSize - rotatedH) / 2 + cellSize / 3;
+  // Font-adaptive nudge: compare the font's ascender to the cell size.
+  // Compact fonts (UDDigiKyokasho, ascender ~cell) need no extra nudge;
+  // taller fonts (Noto Serif/Sans, ascender > cell) need more push to avoid overlap.
+  const EpdFontData* fontData = font.getData(style);
+  const int ascender = fontData ? fontData->ascender : cellSize;
+  const int fontPct = (cellSize > 0) ? (ascender * 100 / cellSize) : 100;
+  const int extraNudge = (fontPct > 100) ? (cellSize * (fontPct - 100) / 30) : 0;
 
-  // In vertical Japanese, opening/closing brackets sit closer to enclosed text.
-  // We bias only on Y (flow direction) to tighten spacing without horizontal drift.
-  const int openingBias = std::max(1, (cellSize * 2) / 3);
-  const int closingBias = std::max(1, cellSize / 6);
+  int drawX = cellLeftX + (cellSize - rotatedW) / 2;
+  int drawY = cellTopY + (cellSize - rotatedH) / 2 + cellSize / 3 + extraNudge * 2;
+
   if (shiftType == 2) {          // closing bracket/quote
     const bool isSquareBracket = (cp == 0x300D || cp == 0x300F || cp == 0x3009 || cp == 0x300B ||
                                   cp == 0x3011 || cp == 0x3015);
     if (isSquareBracket) {
       drawX = cellLeftX + (cellSize - rotatedW) / 2 - cellSize / 3;
     }
+    const int closingBias = std::max(1, cellSize / 6 + extraNudge * 2);
     drawY = cellTopY + cellSize - rotatedH + closingBias;
   } else if (shiftType == 3) {   // opening bracket/quote
-    drawY = cellTopY + cellSize + cellSize * 2 / 3;
+    const int openingBias = std::max(1, (cellSize * 2) / 3 + extraNudge);
+    drawY = cellTopY + cellSize + openingBias;
   }
 
   int minX = cellLeftX;
