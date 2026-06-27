@@ -2,6 +2,7 @@
 
 #include <DictIndex.h>
 #include <Epub/Page.h>
+#include <Epub/PageTextExtractor.h>
 #include <Epub/VerticalSection.h>
 #include <Epub/blocks/TextBlock.h>
 #include <Epub/blocks/ImageBlock.h>
@@ -28,6 +29,7 @@
 #include "EpubReaderChapterSelectionActivity.h"
 #include "EpubReaderFootnotesActivity.h"
 #include "EpubReaderPercentSelectionActivity.h"
+#include "EpubReaderTranslationActivity.h"
 #include "EpubReaderWordLookupActivity.h"
 #include "EpubReaderUtils.h"
 #include "KOReaderCredentialStore.h"
@@ -640,6 +642,23 @@ void EpubReaderActivity::onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction 
               std::make_unique<EpubReaderWordLookupActivity>(renderer, mappedInput, *page),
               [this](const ActivityResult&) { requestUpdate(); });
         }
+      }
+      break;
+    }
+    case EpubReaderMenuActivity::MenuAction::TRANSLATE_PAGE: {
+      std::string pageText;
+      if (verticalSection) {
+        const VerticalPage* page = verticalSection->getPage();
+        if (page) {
+          pageText = PageTextExtractor::fromVerticalPage(*page);
+        }
+      } else if (section) {
+        pageText = section->getTextFromSectionFile();
+      }
+      if (!pageText.empty()) {
+        startActivityForResult(
+            std::make_unique<EpubReaderTranslationActivity>(renderer, mappedInput, std::move(pageText)),
+            [this](const ActivityResult&) { requestUpdate(); });
       }
       break;
     }

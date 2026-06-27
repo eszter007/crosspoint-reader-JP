@@ -34,4 +34,5 @@ class VerticalSection {
   bool createSectionFile(int fontId, uint16_t viewportWidth, uint16_t viewportHeight);
   bool clearCache() const;
   const VerticalPage* getPage() const;
+  const VerticalPage* getPage(int pageIndex) const;
 };

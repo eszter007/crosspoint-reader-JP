@@ -685,3 +685,10 @@ const VerticalPage* VerticalSection::getPage() const {
   }
   return &pages[currentPage];
 }
+
+const VerticalPage* VerticalSection::getPage(int pageIndex) const {
+  if (pageIndex < 0 || pageIndex >= static_cast<int>(pages.size())) {
+    return nullptr;
+  }
+  return &pages[pageIndex];
+}
