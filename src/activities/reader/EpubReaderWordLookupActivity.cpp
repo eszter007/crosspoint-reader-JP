@@ -16,44 +16,22 @@
 namespace {
 constexpr int kMaxLookupChars = 8;
 
+// Returns true for any character that could be part of a Japanese word.
+// Punctuation, whitespace, and formatting marks are excluded.
+// No hiragana skip list — filtering happens at the output stage instead,
+// so multi-char words starting with particles (から, ところ) are found.
 bool isLookupableChar(uint32_t cp) {
   if (cp < 0x30) return false;
   if (Kinsoku::needsVerticalRotation(cp)) return false;
   if (Kinsoku::verticalShiftType(cp) != 0) return false;
-  if (Kinsoku::isSmallKana(cp)) return false;
+  // Small kana (っゃゅょ) are valid word characters — don't filter them.
+  // They have special vertical positioning but are part of words like どっさり, ちゃん.
   if (cp == 0xFE45 || cp == 0xFE46) return false;
   if (cp == 0x30FC) return false;
   if (cp == 0x30FB) return false;
   if (cp == 0x2026 || cp == 0x2025) return false;
-  // Digits — not useful alone, but included in allGlyphs for compounds like ７歳
   if (cp >= '0' && cp <= '9') return false;
   if (cp >= 0xFF10 && cp <= 0xFF19) return false;
-  // Skip common particles/grammar — N5 level, every learner knows these.
-  // They clutter the lookup with unhelpful single-char matches.
-  switch (cp) {
-    case 0x306F: // は
-    case 0x304C: // が
-    case 0x306E: // の
-    case 0x306B: // に
-    case 0x3067: // で
-    case 0x3092: // を
-    case 0x3082: // も
-    case 0x3068: // と
-    case 0x304B: // か
-    case 0x306A: // な
-    case 0x3078: // へ
-    case 0x3088: // よ
-    case 0x306D: // ね
-    case 0x308F: // わ
-    case 0x3066: // て
-    case 0x3060: // だ
-    case 0x305F: // た
-    case 0x308B: // る
-    case 0x3093: // ん (never a standalone word)
-    return false;
-    default:
-      break;
-  }
   if (cp >= 0x3040 && cp <= 0x309F) return true;  // Hiragana
   if (cp >= 0x30A0 && cp <= 0x30FF) return true;  // Katakana
   if (cp >= 0x4E00 && cp <= 0x9FFF) return true;  // CJK Unified
@@ -75,6 +53,10 @@ bool isHiragana(uint32_t cp) {
 bool isCJK(uint32_t cp) {
   return (cp >= 0x4E00 && cp <= 0x9FFF) || (cp >= 0x3400 && cp <= 0x4DBF) ||
          (cp >= 0xF900 && cp <= 0xFAFF);
+}
+
+bool isDigitCp(uint32_t cp) {
+  return (cp >= '0' && cp <= '9') || (cp >= 0xFF10 && cp <= 0xFF19);
 }
 
 // A greedy dictionary match can absorb a trailing case-particle onto a kanji
@@ -113,6 +95,9 @@ bool stripTrailingParticle(const std::string& text, WordLookupResult& result) {
   const bool isParticle = lastCp == 0x306E || lastCp == 0x306F || lastCp == 0x304C || lastCp == 0x3092 ||
                           lastCp == 0x306B || lastCp == 0x3078 || lastCp == 0x3082 || lastCp == 0x3068;
   if (!isParticle) return false;
+  // Only strip a trailing particle when the preceding char is a kanji (東の→東,
+  // 私は→私). Kana stems are ambiguous — ちょっと's と is part of the word, not a
+  // particle — so never strip after kana.
   if (!isCJK(prevCp)) return false;
 
   std::string stem = text.substr(0, lastStart);
@@ -197,13 +182,27 @@ void EpubReaderWordLookupActivity::buildSelectableGlyphs() {
     const auto& g = allGlyphs[i];
     if (i < skipUntil) continue;
 
-    const bool lookupable = isLookupableChar(g.codepoint);
-
-    // Build lookup text from this position
-    std::string text;
     const uint32_t paraIdx = g.paragraphIndex;
+
+    // Skip leading digits — a number is looked up together with the counter
+    // that follows (2年, １５人) so the reading is clear. The dictionary match is
+    // on the counter word; the digits are a display prefix.
+    size_t scanStart = i;
+    int digitGlyphs = 0;
+    while (scanStart < allGlyphs.size() && allGlyphs[scanStart].paragraphIndex == paraIdx &&
+           isDigitCp(allGlyphs[scanStart].codepoint)) {
+      scanStart++;
+      digitGlyphs++;
+    }
+    // A digit run with nothing after it isn't a lookup position.
+    if (digitGlyphs > 0 && (scanStart >= allGlyphs.size() || allGlyphs[scanStart].paragraphIndex != paraIdx)) {
+      continue;
+    }
+
+    // Build lookup text from the first non-digit char
+    std::string text;
     int charCount = 0;
-    for (size_t j = i; j < allGlyphs.size() && charCount < kMaxLookupChars; j++) {
+    for (size_t j = scanStart; j < allGlyphs.size() && charCount < kMaxLookupChars; j++) {
       if (allGlyphs[j].paragraphIndex != paraIdx) break;
       encodeUtf8(allGlyphs[j].codepoint, text);
       charCount++;
@@ -212,10 +211,9 @@ void EpubReaderWordLookupActivity::buildSelectableGlyphs() {
     // Try dictionary lookup to find match length
     WordLookupResult result;
     bool hasMatch = !text.empty() && WordLookup::lookup(text, 0, result);
-    if (hasMatch) stripTrailingParticle(text, result);
     int matchChars = 0;
-    bool particleKanaWord = false;
     if (hasMatch) {
+      stripTrailingParticle(text, result);
       size_t pos = 0;
       while (pos < result.matchLength && pos < text.size()) {
         auto c = static_cast<unsigned char>(text[pos]);
@@ -225,26 +223,78 @@ void EpubReaderWordLookupActivity::buildSelectableGlyphs() {
         else pos += 4;
         matchChars++;
       }
-      // A bare particle (の、と …) should only begin a word when the match is a
-      // genuine kana headword (と→ところ, と→という) — i.e. the entry's headword
-      // equals the matched kana. This rejects 2-char mis-segmentations (の→のと
-      // → strands ところ as ころ) and reading collisions with kanji words
-      // (が→画風/がふう), which would hide the real verb (ふる).
-      particleKanaWord = !lookupable && matchChars >= 3 && result.matchLength <= text.size() &&
-                         result.entry.headword == text.substr(0, result.matchLength);
-      const bool consumeOk = lookupable || particleKanaWord;
-      if (matchChars > 1 && consumeOk) {
-        skipUntil = i + matchChars;
-        // If a name match is followed by an honorific, extend skip to include it
-        size_t afterMatch = i + matchChars;
+
+      // Suppress hiragana-only text matching a kanji headword via reading
+      // collision (ました→真下, ぶ→武 — conjugation fragments). But KEEP entries
+      // marked "usually kana" ([kana]): ちょっと→一寸, とても→迚も are real words
+      // that happen to have a kanji headword.
+      if (!isCJK(allGlyphs[scanStart].codepoint) && !isKatakana(allGlyphs[scanStart].codepoint)) {
+        bool matchAllKana = true;
+        for (size_t ci = scanStart; ci < scanStart + static_cast<size_t>(matchChars) && ci < allGlyphs.size(); ci++) {
+          if (isCJK(allGlyphs[ci].codepoint) || isKatakana(allGlyphs[ci].codepoint)) {
+            matchAllKana = false; break;
+          }
+        }
+        if (matchAllKana) {
+          bool hwHasKanji = false;
+          for (size_t hb = 0; hb < result.entry.headword.size();) {
+            auto hc = static_cast<unsigned char>(result.entry.headword[hb]);
+            uint32_t hcp = 0;
+            if (hc < 0x80) { hcp = hc; hb += 1; }
+            else if ((hc & 0xE0) == 0xC0) { hcp = ((hc & 0x1F) << 6) | (result.entry.headword[hb+1] & 0x3F); hb += 2; }
+            else if ((hc & 0xF0) == 0xE0) { hcp = ((hc & 0x0F) << 12) | ((result.entry.headword[hb+1] & 0x3F) << 6) | (result.entry.headword[hb+2] & 0x3F); hb += 3; }
+            else { hb += 4; }
+            if (isCJK(hcp)) { hwHasKanji = true; break; }
+          }
+          const bool usuallyKana = result.entry.definition.find("[kana]") != std::string::npos;
+          if (hwHasKanji && !usuallyKana) hasMatch = false;
+        }
+      }
+
+      // A case particle that matched exactly 2 chars (にど, のと) usually
+      // mis-segments: the 2nd character starts a longer real word (どっさり,
+      // ところ). If so, don't let the particle consume it — pass through so the
+      // next char begins the longer word.
+      auto isCaseParticle = [](uint32_t cp) {
+        return cp == 0x306B || cp == 0x306E || cp == 0x3068 || cp == 0x304C || cp == 0x306F ||
+               cp == 0x3092 || cp == 0x3082 || cp == 0x3067 || cp == 0x3078 || cp == 0x3084 || cp == 0x304B;
+      };
+      if (hasMatch && matchChars == 2 && isCaseParticle(allGlyphs[scanStart].codepoint) &&
+          scanStart + 1 < allGlyphs.size() && allGlyphs[scanStart + 1].paragraphIndex == paraIdx) {
+        std::string nextText;
+        int nc = 0;
+        for (size_t j = scanStart + 1; j < allGlyphs.size() && nc < kMaxLookupChars; j++) {
+          if (allGlyphs[j].paragraphIndex != paraIdx) break;
+          encodeUtf8(allGlyphs[j].codepoint, nextText);
+          nc++;
+        }
+        WordLookupResult nr;
+        if (!nextText.empty() && WordLookup::lookup(nextText, 0, nr)) {
+          int nmc = 0;
+          size_t pp = 0;
+          while (pp < nr.matchLength && pp < nextText.size()) {
+            auto c = static_cast<unsigned char>(nextText[pp]);
+            if (c < 0x80) pp += 1;
+            else if ((c & 0xE0) == 0xC0) pp += 2;
+            else if ((c & 0xF0) == 0xE0) pp += 3;
+            else pp += 4;
+            nmc++;
+          }
+          if (nmc >= 2) hasMatch = false;  // let the next char start the longer word
+        }
+      }
+
+      if (hasMatch && (matchChars > 1 || digitGlyphs > 0)) {
+        skipUntil = scanStart + matchChars;
+        // Extend skip for honorifics after names
+        size_t afterMatch = scanStart + matchChars;
         if (afterMatch < allGlyphs.size() && allGlyphs[afterMatch].paragraphIndex == paraIdx) {
           uint32_t nextCp = allGlyphs[afterMatch].codepoint;
-          // さん、くん、ちゃん、さま、氏、様
-          if (nextCp == 0x3055) { // さ → check for さん、さま
+          if (nextCp == 0x3055) { // さ → さん、さま
             if (afterMatch + 1 < allGlyphs.size()) {
               uint32_t nn = allGlyphs[afterMatch + 1].codepoint;
-              if (nn == 0x3093) skipUntil = afterMatch + 2; // さん
-              if (nn == 0x307E && afterMatch + 2 < allGlyphs.size() && allGlyphs[afterMatch + 2].paragraphIndex == paraIdx) skipUntil = afterMatch + 2; // さま
+              if (nn == 0x3093) skipUntil = afterMatch + 2;
+              if (nn == 0x307E && afterMatch + 2 < allGlyphs.size() && allGlyphs[afterMatch + 2].paragraphIndex == paraIdx) skipUntil = afterMatch + 2;
             }
           } else if (nextCp == 0x304F) { // く → くん
             if (afterMatch + 1 < allGlyphs.size() && allGlyphs[afterMatch + 1].codepoint == 0x3093)
@@ -254,58 +304,163 @@ void EpubReaderWordLookupActivity::buildSelectableGlyphs() {
               skipUntil = afterMatch + 3;
           } else if (nextCp == 0x6C0F || nextCp == 0x69D8) { // 氏、様
             skipUntil = afterMatch + 1;
-          } else if (nextCp == 0x58EB || nextCp == 0x5E2B || nextCp == 0x54E1) {
-            // Bound profession suffixes 士・師・員 after a kanji compound
-            // (設計+士) aren't separate words — absorb so they don't appear as
-            // lone single-kanji noise.
-            if (isCJK(allGlyphs[i + matchChars - 1].codepoint)) skipUntil = afterMatch + 1;
+          } else if (nextCp == 0x58EB || nextCp == 0x5E2B || nextCp == 0x54E1) { // 士・師・員
+            if (isCJK(allGlyphs[scanStart + matchChars - 1].codepoint)) skipUntil = afterMatch + 1;
           }
         }
       }
     }
 
-    // A single hiragana matching as a "word" (い, り, こ …) is almost always
-    // noise for a learner — suppress it.
-    if (hasMatch && matchChars <= 1 && isHiragana(g.codepoint)) {
-      hasMatch = false;
-    }
-
-    // For filtered particles, only promote if a grammar dictionary match exists
-    bool grammarPromoted = false;
-    if (!lookupable && charCount >= 2 && Storage.exists(DictIndex::GRAMMAR_IDX_PATH)) {
-      for (int wLen = std::min(charCount, 10); wLen >= 2; wLen--) {
-        size_t byteEnd = 0;
-        int cnt = 0;
-        for (size_t b = 0; b < text.size() && cnt < wLen; cnt++) {
-          auto c = static_cast<unsigned char>(text[b]);
-          if (c < 0x80) b += 1;
-          else if ((c & 0xE0) == 0xC0) b += 2;
-          else if ((c & 0xF0) == 0xE0) b += 3;
-          else b += 4;
-          byteEnd = b;
-        }
-        std::string window = text.substr(0, byteEnd);
-        DictEntry gramEntry;
-        if (DictIndex::lookupInFile(window.c_str(), DictIndex::GRAMMAR_IDX_PATH,
-                                     DictIndex::GRAMMAR_DAT_PATH, gramEntry)) {
-          grammarPromoted = true;
-          if (wLen > 1) skipUntil = i + wLen;
-          break;
-        }
-      }
-    }
-
-    // A filtered particle (と、の …) that starts a multi-char vocabulary word
-    // (と→ところ) should be promoted, so the whole word is shown rather than
-    // leaving the tail (ころ) as a spurious separate entry.
-    const bool vocabPromoted = particleKanaWord;
-
-    // Only include positions that actually have a dictionary match
-    if ((lookupable && hasMatch) || grammarPromoted || vocabPromoted) {
+    // Include this position if it has a dictionary match
+    if (hasMatch) {
       selectToAllIdx.push_back(i);
       selectableGlyphs.push_back(g);
     }
   }
+
+  // Post-scan display filter: remove single-char entries that are common
+  // particles or conjugation fragments. These are valid in the scan (so から,
+  // ところ etc. get found correctly) but useless as standalone lookup results.
+  auto isDisplayNoise = [](uint32_t cp) -> bool {
+    switch (cp) {
+      case 0x306F: // は
+      case 0x304C: // が
+      case 0x306E: // の
+      case 0x306B: // に
+      case 0x3067: // で
+      case 0x3092: // を
+      case 0x3082: // も
+      case 0x3068: // と
+      case 0x304B: // か
+      case 0x306A: // な
+      case 0x3078: // へ
+      case 0x3088: // よ
+      case 0x306D: // ね
+      case 0x308F: // わ
+      case 0x3066: // て
+      case 0x3060: // だ
+      case 0x305F: // た
+      case 0x308B: // る
+      case 0x3093: // ん
+      case 0x3044: // い
+      case 0x304F: // く
+      case 0x3057: // し
+      case 0x3055: // さ
+      case 0x305B: // せ
+      case 0x3089: // ら
+      case 0x304D: // き
+      case 0x3053: // こ
+      case 0x305D: // そ
+      case 0x3042: // あ
+      case 0x304A: // お (honorific prefix)
+      case 0x307E: // ま
+      case 0x3059: // す
+      case 0x308C: // れ
+      case 0x3079: // べ
+      case 0x305E: // ぞ
+      case 0x3081: // め
+      case 0x3076: // ぶ
+      case 0x307F: // み
+      case 0x3064: // つ
+      case 0x306C: // ぬ
+      case 0x3075: // ふ
+      case 0x3080: // む
+        return true;
+      default:
+        return false;
+    }
+  };
+
+  // Also filter multi-char conjugation suffixes that are never standalone words.
+  auto isConjugationNoise = [&](size_t readIdx) -> bool {
+    const size_t allIdx = selectToAllIdx[readIdx];
+    const uint32_t paraIdx = allGlyphs[allIdx].paragraphIndex;
+    // Build the matched string (up to 4 chars)
+    std::string matched;
+    int mLen = 0;
+    for (size_t j = allIdx; j < allGlyphs.size() && mLen < 4; j++) {
+      if (allGlyphs[j].paragraphIndex != paraIdx) break;
+      encodeUtf8(allGlyphs[j].codepoint, matched);
+      mLen++;
+    }
+    // Check against common conjugation patterns
+    static const char* const patterns[] = {
+      "\xe3\x81\xbe\xe3\x81\x97\xe3\x81\x9f",     // ました
+      "\xe3\x81\xbe\xe3\x81\x9b\xe3\x82\x93",     // ません
+      "\xe3\x81\xa7\xe3\x81\x97\xe3\x81\x9f",     // でした
+      "\xe3\x81\xa7\xe3\x81\x99",                   // です
+      "\xe3\x81\xbe\xe3\x81\x99",                   // ます
+      nullptr
+    };
+    for (int p = 0; patterns[p]; p++) {
+      size_t plen = strlen(patterns[p]);
+      if (matched.size() >= plen && matched.substr(0, plen) == patterns[p]) return true;
+    }
+    return false;
+  };
+
+  // For each entry, do a quick performLookup-style check to see what
+  // the actual displayed match would be, and filter noise from that.
+  size_t writeIdx = 0;
+  for (size_t readIdx = 0; readIdx < selectableGlyphs.size(); readIdx++) {
+    const size_t allIdx = selectToAllIdx[readIdx];
+    const uint32_t paraIdx = allGlyphs[allIdx].paragraphIndex;
+
+    // Build lookup text from this position
+    std::string ltext;
+    int lcount = 0;
+    for (size_t j = allIdx; j < allGlyphs.size() && lcount < kMaxLookupChars; j++) {
+      if (allGlyphs[j].paragraphIndex != paraIdx) break;
+      encodeUtf8(allGlyphs[j].codepoint, ltext);
+      lcount++;
+    }
+    WordLookupResult lr;
+    if (!ltext.empty() && WordLookup::lookup(ltext, 0, lr)) {
+      stripTrailingParticle(ltext, lr);
+      // Count matched chars
+      int mc = 0;
+      size_t p = 0;
+      while (p < lr.matchLength && p < ltext.size()) {
+        auto c = static_cast<unsigned char>(ltext[p]);
+        if (c < 0x80) p += 1;
+        else if ((c & 0xE0) == 0xC0) p += 2;
+        else if ((c & 0xF0) == 0xE0) p += 3;
+        else p += 4;
+        mc++;
+      }
+      // Filter: all matched chars are noise particles → skip
+      bool allNoise = true;
+      for (size_t ci = allIdx; ci < allIdx + static_cast<size_t>(mc) && ci < allGlyphs.size(); ci++) {
+        if (!isDisplayNoise(allGlyphs[ci].codepoint)) { allNoise = false; break; }
+      }
+      if (allNoise) continue;
+
+      // Exact-match colloquial/grammatical contractions that are never useful as
+      // standalone vocabulary (なくちゃ→ちゃ, じゃ, etc.). Use the exact matched
+      // text so real words (茶碗/ちゃわん) are not filtered.
+      const std::string matchedText = ltext.substr(0, lr.matchLength);
+      static const char* const exactNoise[] = {
+        "\xe3\x81\xa1\xe3\x82\x83",  // ちゃ
+        "\xe3\x81\x98\xe3\x82\x83",  // じゃ
+        "\xe3\x81\xa1\xe3\x82\x83\xe3\x81\x86",  // ちゃう
+        "\xe3\x81\xa3\xe3\x81\xa6",  // って
+        nullptr
+      };
+      bool isExactNoise = false;
+      for (int e = 0; exactNoise[e]; e++) {
+        if (matchedText == exactNoise[e]) { isExactNoise = true; break; }
+      }
+      if (isExactNoise) continue;
+    }
+    if (isConjugationNoise(readIdx)) {
+      continue;
+    }
+    selectableGlyphs[writeIdx] = selectableGlyphs[readIdx];
+    selectToAllIdx[writeIdx] = selectToAllIdx[readIdx];
+    writeIdx++;
+  }
+  selectableGlyphs.resize(writeIdx);
+  selectToAllIdx.resize(writeIdx);
 }
 
 void EpubReaderWordLookupActivity::onEnter() {
@@ -384,11 +539,39 @@ void EpubReaderWordLookupActivity::performLookup() {
   std::string text = buildLookupText(static_cast<size_t>(cursorIndex));
   if (text.empty()) return;
 
+  // If the text starts with digits (2年, １５人), look up the counter/word that
+  // follows and show the digits as a prefix so the reading is clear (2年).
+  std::string digitPrefix;
+  {
+    size_t b = 0;
+    while (b < text.size()) {
+      auto c = static_cast<unsigned char>(text[b]);
+      if (c >= '0' && c <= '9') {
+        digitPrefix.push_back(static_cast<char>(c));
+        b += 1;
+      } else if (c == 0xEF && b + 2 < text.size() &&
+                 static_cast<unsigned char>(text[b + 1]) == 0xBC &&
+                 static_cast<unsigned char>(text[b + 2]) >= 0x90 &&
+                 static_cast<unsigned char>(text[b + 2]) <= 0x99) {
+        // Fullwidth digit ０-９ (U+FF10–U+FF19)
+        digitPrefix.append(text, b, 3);
+        b += 3;
+      } else {
+        break;
+      }
+    }
+    if (b > 0 && b < text.size()) {
+      text = text.substr(b);  // look up the part after the digits
+    } else {
+      digitPrefix.clear();  // nothing after digits, or no digits
+    }
+  }
+
   WordLookupResult result;
   if (WordLookup::lookup(text, 0, result)) {
     stripTrailingParticle(text, result);
     hasResult = true;
-    resultHeadword = std::move(result.entry.headword);
+    resultHeadword = digitPrefix + result.entry.headword;
     resultDefinition = std::move(result.entry.definition);
     int chars = 0;
     size_t pos = 0;
@@ -524,17 +707,15 @@ void EpubReaderWordLookupActivity::renderContentArea(const Rect& screen, int con
     const int maxWidth = screen.width - metrics.contentSidePadding * 2;
     const int textX = screen.x + metrics.contentSidePadding;
 
-    std::string posText = std::to_string(cursorIndex + 1) + "/" + std::to_string(selectableGlyphs.size());
     int defY;
 
     if (scrollOffset == 0) {
-      renderer.drawText(SMALL_FONT_ID, textX, contentTop, posText.c_str(), true);
-      int headY = contentTop + renderer.getLineHeight(SMALL_FONT_ID) + 2;
-      renderer.drawText(jaFont, textX, headY, resultHeadword.c_str(), true, EpdFontFamily::BOLD);
-      defY = headY + renderer.getLineHeight(jaFont) + metrics.verticalSpacing;
+      // Headword at the top (position counter is now in the header).
+      renderer.drawText(jaFont, textX, contentTop, resultHeadword.c_str(), true, EpdFontFamily::BOLD);
+      defY = contentTop + renderer.getLineHeight(jaFont) + metrics.verticalSpacing;
     } else {
-      // When scrolled, skip the header to show more definition
-      std::string scrollInfo = resultHeadword + " (" + posText + ") \xe2\x96\xb2";
+      // When scrolled, show a compact header line with the headword + scroll mark.
+      std::string scrollInfo = resultHeadword + " \xe2\x96\xb2";
       renderer.drawText(SMALL_FONT_ID, textX, contentTop, scrollInfo.c_str(), true);
       defY = contentTop + renderer.getLineHeight(SMALL_FONT_ID) + 4;
     }
@@ -645,11 +826,17 @@ void EpubReaderWordLookupActivity::render(RenderLock&&) {
   const int footerHeight = renderer.getLineHeight(SMALL_FONT_ID) + metrics.verticalSpacing;
   const int contentBottom = screen.y + screen.height - footerHeight;
 
+  // Position counter (35/50) shown right-aligned on the header baseline.
+  std::string posText;
+  if (hasResult && !selectableGlyphs.empty()) {
+    posText = std::to_string(cursorIndex + 1) + "/" + std::to_string(selectableGlyphs.size());
+  }
+  const Rect headerRect{screen.x, screen.y + metrics.topPadding, screen.width, metrics.headerHeight};
+
   if (!initialRenderDone) {
     renderer.clearScreen();
 
-    GUI.drawHeader(renderer, Rect{screen.x, screen.y + metrics.topPadding, screen.width, metrics.headerHeight},
-                   tr(STR_WORD_LOOKUP));
+    GUI.drawHeader(renderer, headerRect, tr(STR_WORD_LOOKUP), posText.empty() ? nullptr : posText.c_str());
 
     renderContentArea(screen, contentTop);
 
@@ -664,6 +851,8 @@ void EpubReaderWordLookupActivity::render(RenderLock&&) {
     // button-hint band margins, which screen.height excludes), then redraw hints.
     const int physBottom = renderer.getScreenHeight();
     renderer.fillRect(0, contentTop, renderer.getScreenWidth(), physBottom - contentTop, false);
+    // Redraw the header so the position counter updates (drawHeader clears it).
+    GUI.drawHeader(renderer, headerRect, tr(STR_WORD_LOOKUP), posText.empty() ? nullptr : posText.c_str());
     const auto labels2 = mappedInput.mapLabels(tr(STR_BACK), tr(STR_SELECT), tr(STR_DIR_UP), tr(STR_DIR_DOWN));
     GUI.drawButtonHints(renderer, labels2.btn1, labels2.btn2, labels2.btn3, labels2.btn4);
 

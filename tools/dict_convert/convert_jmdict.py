@@ -305,6 +305,21 @@ def format_definition_yomitan(headword: str, reading: str, definitions) -> str:
     if reading and reading != headword:
         parts.append(f"【{reading}】")
 
+    def flatten_list_defn(d) -> str:
+        # Yomitan list-form definitions (variant/redirect entries) like
+        # ["引っ張り上げる", ["redirected from 引っぱり上げる"]]. Join the string
+        # parts; drop "redirected from ..." cross-reference noise.
+        if isinstance(d, str):
+            if d.startswith("redirected from"):
+                return ""
+            return d
+        if isinstance(d, dict):
+            return flatten_structured_content(d)
+        if isinstance(d, list):
+            pieces = [flatten_list_defn(x) for x in d]
+            return " ".join(p for p in pieces if p)
+        return ""
+
     if isinstance(definitions, list):
         non_empty = []
         for defn in definitions[:6]:
@@ -312,11 +327,19 @@ def format_definition_yomitan(headword: str, reading: str, definitions) -> str:
                 text = defn
             elif isinstance(defn, dict):
                 text = flatten_structured_content(defn)
+            elif isinstance(defn, list):
+                text = flatten_list_defn(defn)
             else:
                 text = str(defn)
             text = text.strip()
             if text:
                 non_empty.append(text)
+        # Drop pure-duplicate entries (redirect variant repeating the first gloss)
+        deduped = []
+        for t in non_empty:
+            if t not in deduped:
+                deduped.append(t)
+        non_empty = deduped
 
         for i, text in enumerate(non_empty):
             if len(non_empty) > 1:
@@ -329,6 +352,27 @@ def format_definition_yomitan(headword: str, reading: str, definitions) -> str:
     result = re.sub(r'\n{3,}', '\n\n', result)
     result = re.sub(r'• • ', '• ', result)
     return result.strip()
+
+
+def find_redirect_target(definitions) -> str:
+    """If a Yomitan entry is purely a redirect (variant spelling pointing to a
+    canonical headword via a 'redirect-glossary'), return the target headword.
+    Otherwise return ''."""
+    def search(node):
+        if isinstance(node, dict):
+            data = node.get("data")
+            if isinstance(data, dict) and data.get("content") == "redirect-glossary":
+                # The target headword is the link text (strip the ⟶ arrow).
+                txt = flatten_structured_content(node).replace("⟶", "").strip()
+                return txt
+            return search(node.get("content"))
+        if isinstance(node, list):
+            for x in node:
+                r = search(x)
+                if r:
+                    return r
+        return ""
+    return search(definitions)
 
 
 def convert_yomitan(zip_path: str, output_dir: str):
@@ -353,47 +397,64 @@ def convert_yomitan(zip_path: str, output_dir: str):
 
         print(f"  Found {len(term_banks)} term bank files")
 
-        records = []
-        entry_count = 0
-
+        # Pass 1: load all entries; build a headword → best definition map for
+        # non-redirect entries so variant/redirect entries can be resolved.
+        all_entries = []
+        canonical_defs = {}  # headword → (definition_string, priority)
         for bank_name in term_banks:
             with z.open(bank_name) as f:
                 entries = json.load(f)
-
             for entry in entries:
                 if not isinstance(entry, list) or len(entry) < 6:
                     continue
-
                 headword = entry[0]
+                if not headword or not isinstance(headword, str):
+                    continue
                 reading = entry[1] if len(entry) > 1 else ""
                 score = entry[4] if len(entry) > 4 else 0
                 definitions = entry[5] if len(entry) > 5 else []
+                redirect = find_redirect_target(definitions)
+                all_entries.append((headword, reading, score, definitions, redirect))
+                if not redirect:
+                    definition = format_definition_yomitan(headword, reading, definitions)
+                    if definition:
+                        priority = max(0, min(255, int(score) + 128)) if isinstance(score, (int, float)) else 100
+                        prev = canonical_defs.get(headword)
+                        if prev is None or priority > prev[1]:
+                            canonical_defs[headword] = (definition, priority)
 
-                if not headword or not isinstance(headword, str):
-                    continue
-
+        # Pass 2: emit records, resolving redirects to the target's real definition.
+        records = []
+        entry_count = 0
+        for headword, reading, score, definitions, redirect in all_entries:
+            if redirect:
+                target = canonical_defs.get(redirect)
+                if not target:
+                    continue  # dangling redirect — skip the useless circular entry
+                # Show the canonical spelling note + the real definition.
+                definition = f"= {redirect}\n{target[0]}"
+                priority = target[1]
+            else:
                 definition = format_definition_yomitan(headword, reading, definitions)
                 if not definition:
                     continue
-
-                def_bytes = definition.encode("utf-8")
                 priority = max(0, min(255, int(score) + 128)) if isinstance(score, (int, float)) else 100
 
-                seen_headwords = set()
-                hw_bytes = headword.encode("utf-8")
-                if len(hw_bytes) < HEADWORD_SIZE:
-                    seen_headwords.add(hw_bytes)
-                    records.append((hw_bytes, def_bytes, priority))
+            def_bytes = definition.encode("utf-8")
+            seen_headwords = set()
+            hw_bytes = headword.encode("utf-8")
+            if len(hw_bytes) < HEADWORD_SIZE:
+                seen_headwords.add(hw_bytes)
+                records.append((hw_bytes, def_bytes, priority))
 
-                if reading and reading != headword:
-                    r_bytes = reading.encode("utf-8")
-                    if len(r_bytes) < HEADWORD_SIZE and r_bytes not in seen_headwords:
-                        # Format with reading as headword so 【reading】 is hidden
-                        r_def = format_definition_yomitan(reading, reading, definitions)
-                        if r_def:
-                            records.append((r_bytes, r_def.encode("utf-8"), priority))
+            if reading and reading != headword and not redirect:
+                r_bytes = reading.encode("utf-8")
+                if len(r_bytes) < HEADWORD_SIZE and r_bytes not in seen_headwords:
+                    r_def = format_definition_yomitan(reading, reading, definitions)
+                    if r_def:
+                        records.append((r_bytes, r_def.encode("utf-8"), priority))
 
-                entry_count += 1
+            entry_count += 1
 
     print(f"Processed {entry_count} Yomitan entries → {len(records)} index records")
     write_binary(records, output_dir)
