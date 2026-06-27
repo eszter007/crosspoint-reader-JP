@@ -4,6 +4,7 @@
 #include <Epub/VerticalParsedText.h>
 
 struct Rect;
+class Page;
 
 #include <string>
 #include <vector>
@@ -13,8 +14,12 @@ struct Rect;
 
 class EpubReaderWordLookupActivity final : public Activity {
  public:
+  // Vertical (tategaki) reading mode.
   explicit EpubReaderWordLookupActivity(GfxRenderer& renderer, MappedInputManager& mappedInput,
                                         const VerticalPage& page);
+  // Horizontal (yokogaki) reading mode.
+  explicit EpubReaderWordLookupActivity(GfxRenderer& renderer, MappedInputManager& mappedInput,
+                                        const Page& page);
 
   void onEnter() override;
   void onExit() override;
@@ -53,6 +58,9 @@ class EpubReaderWordLookupActivity final : public Activity {
   void moveCursor(int delta);
   void performLookup();
   std::string buildLookupText(size_t startIdx) const;
+
+  // Pre-scan allGlyphs (already populated) to build selectableGlyphs/selectToAllIdx.
+  void buildSelectableGlyphs();
 
   static void encodeUtf8(uint32_t cp, std::string& out);
 

@@ -8,6 +8,7 @@
 
 #include "CrossPointSettings.h"
 #include "Epub/Kinsoku.h"
+#include "Epub/Page.h"
 #include "MappedInputManager.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
@@ -48,6 +49,7 @@ bool isLookupableChar(uint32_t cp) {
     case 0x3060: // だ
     case 0x305F: // た
     case 0x308B: // る
+    case 0x3093: // ん (never a standalone word)
     return false;
     default:
       break;
@@ -74,6 +76,53 @@ bool isCJK(uint32_t cp) {
   return (cp >= 0x4E00 && cp <= 0x9FFF) || (cp >= 0x3400 && cp <= 0x4DBF) ||
          (cp >= 0xF900 && cp <= 0xFAFF);
 }
+
+// A greedy dictionary match can absorb a trailing case-particle onto a kanji
+// stem (東の, 私は) and land on a junk entry. When the match is [kanji…][particle]
+// and the stem alone is itself a valid word, shorten `result` to the stem.
+// Only fires when the char before the particle is a kanji, so hiragana
+// compounds (もの, こと) are left intact.
+bool stripTrailingParticle(const std::string& text, WordLookupResult& result) {
+  if (result.matchLength == 0) return false;
+  size_t pos = 0, lastStart = 0;
+  uint32_t lastCp = 0, prevCp = 0;
+  int chars = 0;
+  while (pos < result.matchLength && pos < text.size()) {
+    prevCp = lastCp;
+    lastStart = pos;
+    auto c = static_cast<unsigned char>(text[pos]);
+    if (c < 0x80) {
+      lastCp = c;
+      pos += 1;
+    } else if ((c & 0xE0) == 0xC0) {
+      lastCp = ((c & 0x1F) << 6) | (static_cast<unsigned char>(text[pos + 1]) & 0x3F);
+      pos += 2;
+    } else if ((c & 0xF0) == 0xE0) {
+      lastCp = ((c & 0x0F) << 12) | ((static_cast<unsigned char>(text[pos + 1]) & 0x3F) << 6) |
+               (static_cast<unsigned char>(text[pos + 2]) & 0x3F);
+      pos += 3;
+    } else {
+      lastCp = 0;
+      pos += 4;
+    }
+    chars++;
+  }
+  if (chars < 2) return false;
+
+  // Trailing case/possessive particles: の は が を に へ も と
+  const bool isParticle = lastCp == 0x306E || lastCp == 0x306F || lastCp == 0x304C || lastCp == 0x3092 ||
+                          lastCp == 0x306B || lastCp == 0x3078 || lastCp == 0x3082 || lastCp == 0x3068;
+  if (!isParticle) return false;
+  if (!isCJK(prevCp)) return false;
+
+  std::string stem = text.substr(0, lastStart);
+  WordLookupResult sr;
+  if (WordLookup::lookup(stem, 0, sr) && sr.matchLength == stem.size()) {
+    result = std::move(sr);
+    return true;
+  }
+  return false;
+}
 }
 
 EpubReaderWordLookupActivity::EpubReaderWordLookupActivity(GfxRenderer& renderer, MappedInputManager& mappedInput,
@@ -85,7 +134,59 @@ EpubReaderWordLookupActivity::EpubReaderWordLookupActivity(GfxRenderer& renderer
     GlyphRef ref{g.x, g.y, g.column, g.row, g.codepoint, g.paragraphIndex, false};
     allGlyphs.push_back(ref);
   }
+  buildSelectableGlyphs();
+}
 
+EpubReaderWordLookupActivity::EpubReaderWordLookupActivity(GfxRenderer& renderer, MappedInputManager& mappedInput,
+                                                            const Page& page)
+    : Activity("WordLookup", renderer, mappedInput) {
+  // Horizontal mode: flatten the page's lines into one continuous character
+  // stream (single paragraph). Latin words keep their separating spaces; CJK
+  // runs are concatenated directly so dictionary lookups see contiguous text.
+  auto isAsciiWord = [](unsigned char c) {
+    return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9');
+  };
+  uint32_t lastCp = 0;
+  for (const auto& el : page.elements) {
+    if (el->getTag() != TAG_PageLine) continue;
+    const auto& line = static_cast<const PageLine&>(*el);
+    if (!line.getBlock()) continue;
+    for (const auto& word : line.getBlock()->getWords()) {
+      if (word.empty()) continue;
+      // Insert a separating space only between two ASCII-word boundaries.
+      if (lastCp && isAsciiWord(static_cast<unsigned char>(lastCp)) &&
+          isAsciiWord(static_cast<unsigned char>(word[0]))) {
+        allGlyphs.push_back(GlyphRef{0, 0, 0, 0, ' ', 0, false});
+      }
+      size_t b = 0;
+      while (b < word.size()) {
+        auto c0 = static_cast<unsigned char>(word[b]);
+        uint32_t cp;
+        if (c0 < 0x80) {
+          cp = c0;
+          b += 1;
+        } else if ((c0 & 0xE0) == 0xC0) {
+          cp = (c0 & 0x1F) << 6 | (static_cast<unsigned char>(word[b + 1]) & 0x3F);
+          b += 2;
+        } else if ((c0 & 0xF0) == 0xE0) {
+          cp = (c0 & 0x0F) << 12 | (static_cast<unsigned char>(word[b + 1]) & 0x3F) << 6 |
+               (static_cast<unsigned char>(word[b + 2]) & 0x3F);
+          b += 3;
+        } else {
+          cp = (c0 & 0x07) << 18 | (static_cast<unsigned char>(word[b + 1]) & 0x3F) << 12 |
+               (static_cast<unsigned char>(word[b + 2]) & 0x3F) << 6 |
+               (static_cast<unsigned char>(word[b + 3]) & 0x3F);
+          b += 4;
+        }
+        allGlyphs.push_back(GlyphRef{0, 0, 0, 0, cp, 0, false});
+        lastCp = cp;
+      }
+    }
+  }
+  buildSelectableGlyphs();
+}
+
+void EpubReaderWordLookupActivity::buildSelectableGlyphs() {
   // Pre-scan: walk through all characters, do dictionary lookups to find
   // word boundaries. Characters inside a matched word are skipped.
   // Filtered particles (は、が etc.) are still checked — if they start a
@@ -111,7 +212,9 @@ EpubReaderWordLookupActivity::EpubReaderWordLookupActivity(GfxRenderer& renderer
     // Try dictionary lookup to find match length
     WordLookupResult result;
     bool hasMatch = !text.empty() && WordLookup::lookup(text, 0, result);
+    if (hasMatch) stripTrailingParticle(text, result);
     int matchChars = 0;
+    bool particleKanaWord = false;
     if (hasMatch) {
       size_t pos = 0;
       while (pos < result.matchLength && pos < text.size()) {
@@ -122,7 +225,15 @@ EpubReaderWordLookupActivity::EpubReaderWordLookupActivity(GfxRenderer& renderer
         else pos += 4;
         matchChars++;
       }
-      if (matchChars > 1) {
+      // A bare particle (の、と …) should only begin a word when the match is a
+      // genuine kana headword (と→ところ, と→という) — i.e. the entry's headword
+      // equals the matched kana. This rejects 2-char mis-segmentations (の→のと
+      // → strands ところ as ころ) and reading collisions with kanji words
+      // (が→画風/がふう), which would hide the real verb (ふる).
+      particleKanaWord = !lookupable && matchChars >= 3 && result.matchLength <= text.size() &&
+                         result.entry.headword == text.substr(0, result.matchLength);
+      const bool consumeOk = lookupable || particleKanaWord;
+      if (matchChars > 1 && consumeOk) {
         skipUntil = i + matchChars;
         // If a name match is followed by an honorific, extend skip to include it
         size_t afterMatch = i + matchChars;
@@ -143,9 +254,20 @@ EpubReaderWordLookupActivity::EpubReaderWordLookupActivity(GfxRenderer& renderer
               skipUntil = afterMatch + 3;
           } else if (nextCp == 0x6C0F || nextCp == 0x69D8) { // 氏、様
             skipUntil = afterMatch + 1;
+          } else if (nextCp == 0x58EB || nextCp == 0x5E2B || nextCp == 0x54E1) {
+            // Bound profession suffixes 士・師・員 after a kanji compound
+            // (設計+士) aren't separate words — absorb so they don't appear as
+            // lone single-kanji noise.
+            if (isCJK(allGlyphs[i + matchChars - 1].codepoint)) skipUntil = afterMatch + 1;
           }
         }
       }
+    }
+
+    // A single hiragana matching as a "word" (い, り, こ …) is almost always
+    // noise for a learner — suppress it.
+    if (hasMatch && matchChars <= 1 && isHiragana(g.codepoint)) {
+      hasMatch = false;
     }
 
     // For filtered particles, only promote if a grammar dictionary match exists
@@ -173,8 +295,13 @@ EpubReaderWordLookupActivity::EpubReaderWordLookupActivity(GfxRenderer& renderer
       }
     }
 
+    // A filtered particle (と、の …) that starts a multi-char vocabulary word
+    // (と→ところ) should be promoted, so the whole word is shown rather than
+    // leaving the tail (ころ) as a spurious separate entry.
+    const bool vocabPromoted = particleKanaWord;
+
     // Only include positions that actually have a dictionary match
-    if ((lookupable && hasMatch) || grammarPromoted) {
+    if ((lookupable && hasMatch) || grammarPromoted || vocabPromoted) {
       selectToAllIdx.push_back(i);
       selectableGlyphs.push_back(g);
     }
@@ -259,6 +386,7 @@ void EpubReaderWordLookupActivity::performLookup() {
 
   WordLookupResult result;
   if (WordLookup::lookup(text, 0, result)) {
+    stripTrailingParticle(text, result);
     hasResult = true;
     resultHeadword = std::move(result.entry.headword);
     resultDefinition = std::move(result.entry.definition);

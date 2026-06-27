@@ -283,7 +283,7 @@ void EpubReaderActivity::loop() {
         bookProgress = epub->calculateProgress(currentSpineIndex, chapterProgress) * 100.0f;
       }
       const int bookProgressPercent = clampPercent(static_cast<int>(bookProgress + 0.5f));
-      const bool hasWordLookup = SETTINGS.verticalTextMode && verticalSection && DictIndex::isAvailable();
+      const bool hasWordLookup = (verticalSection || section) && DictIndex::isAvailable();
       startActivityForResult(std::make_unique<EpubReaderMenuActivity>(
                                  renderer, mappedInput, epub->getTitle(), currentPage, totalPages, bookProgressPercent,
                                  SETTINGS.orientation, !currentPageFootnotes.empty(), hasWordLookup),
@@ -637,6 +637,13 @@ void EpubReaderActivity::onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction 
     case EpubReaderMenuActivity::MenuAction::WORD_LOOKUP: {
       if (verticalSection) {
         const VerticalPage* page = verticalSection->getPage();
+        if (page) {
+          startActivityForResult(
+              std::make_unique<EpubReaderWordLookupActivity>(renderer, mappedInput, *page),
+              [this](const ActivityResult&) { requestUpdate(); });
+        }
+      } else if (section) {
+        auto page = section->loadPageFromSectionFile();
         if (page) {
           startActivityForResult(
               std::make_unique<EpubReaderWordLookupActivity>(renderer, mappedInput, *page),
