@@ -38,7 +38,7 @@ std::string PageTextExtractor::fromVerticalPage(const VerticalPage& page) {
       prevParagraph = g.paragraphIndex;
     }
 
-    if (g.rotated) {
+    if (g.renderKind == VerticalGlyph::RotatedRun) {
       if (!g.rotatedRunText.empty()) {
         text += g.rotatedRunText;
       }
