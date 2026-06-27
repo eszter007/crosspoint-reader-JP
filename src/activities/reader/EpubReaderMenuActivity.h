@@ -24,13 +24,15 @@ class EpubReaderMenuActivity final : public Activity {
     SYNC,
     DELETE_CACHE,
     WORD_LOOKUP,
-    TRANSLATE_PAGE
+    TRANSLATE_PAGE,
+    TOGGLE_VERTICAL
   };
 
   explicit EpubReaderMenuActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, const std::string& title,
                                   const int currentPage, const int totalPages, const int bookProgressPercent,
                                   const uint8_t currentOrientation, const bool hasFootnotes,
-                                  const bool hasWordLookup = false);
+                                  const bool hasWordLookup = false, const bool showVerticalToggle = false,
+                                  const bool verticalEnabled = false);
 
   void onEnter() override;
   void onExit() override;
@@ -43,7 +45,8 @@ class EpubReaderMenuActivity final : public Activity {
     StrId labelId;
   };
 
-  static std::vector<MenuItem> buildMenuItems(bool hasFootnotes, bool hasWordLookup);
+  static std::vector<MenuItem> buildMenuItems(bool hasFootnotes, bool hasWordLookup, bool showVerticalToggle,
+                                               bool verticalEnabled);
 
   // Fixed menu layout
   const std::vector<MenuItem> menuItems;

@@ -39,6 +39,8 @@ class EpubReaderActivity final : public Activity {
   // Tracks whether this book is currently removed from Recent Books by the
   // removeReadBooksFromRecents feature (set at End-of-Book, cleared if paged back in).
   bool recentsEntryRemoved = false;
+  // Per-book vertical text override: -1 = auto (detect from language), 0 = off, 1 = on
+  int8_t verticalOverride = -1;
   unsigned long bookmarkMessageTime = 0UL;
   // Set when the reader is left at end-of-book and SETTINGS.moveFinishedToReadFolder is on.
   // Consumed in onExit() to relocate the finished book into /Read/.
@@ -73,6 +75,8 @@ class EpubReaderActivity final : public Activity {
   // Footnote navigation
   void navigateToHref(const std::string& href, bool savePosition = false);
   void restoreSavedPosition();
+  bool useVerticalText() const;
+  bool isJapaneseBook() const;
 
  public:
   explicit EpubReaderActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, std::unique_ptr<Epub> epub)

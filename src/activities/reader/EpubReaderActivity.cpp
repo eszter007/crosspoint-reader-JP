@@ -283,10 +283,12 @@ void EpubReaderActivity::loop() {
         bookProgress = epub->calculateProgress(currentSpineIndex, chapterProgress) * 100.0f;
       }
       const int bookProgressPercent = clampPercent(static_cast<int>(bookProgress + 0.5f));
-      const bool hasWordLookup = (verticalSection || section) && DictIndex::isAvailable();
+      const bool hasWordLookup = isJapaneseBook() && (verticalSection || section) && DictIndex::isAvailable();
+      const bool showVerticalToggle = isJapaneseBook();
       startActivityForResult(std::make_unique<EpubReaderMenuActivity>(
                                  renderer, mappedInput, epub->getTitle(), currentPage, totalPages, bookProgressPercent,
-                                 SETTINGS.orientation, !currentPageFootnotes.empty(), hasWordLookup),
+                                 SETTINGS.orientation, !currentPageFootnotes.empty(), hasWordLookup,
+                                 showVerticalToggle, useVerticalText()),
                              [this](const ActivityResult& result) {
                                // Always apply orientation change even if the menu was cancelled
                                const auto& menu = std::get<MenuResult>(result.data);
@@ -669,6 +671,13 @@ void EpubReaderActivity::onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction 
       }
       break;
     }
+    case EpubReaderMenuActivity::MenuAction::TOGGLE_VERTICAL: {
+      verticalOverride = useVerticalText() ? 0 : 1;
+      section.reset();
+      verticalSection.reset();
+      requestUpdate();
+      break;
+    }
   }
 }
 
@@ -886,7 +895,7 @@ void EpubReaderActivity::render(RenderLock&& lock) {
   const uint16_t viewportHeight = renderer.getScreenHeight() - orientedMarginTop - orientedMarginBottom;
 
   // --- Vertical text mode path ---
-  if (SETTINGS.verticalTextMode) {
+  if (useVerticalText()) {
     if (!verticalSection) {
       LOG_DBG("ERS", "Loading vertical section, index: %d", currentSpineIndex);
       verticalSection = std::unique_ptr<VerticalSection>(new VerticalSection(epub, currentSpineIndex, renderer));
@@ -1167,7 +1176,7 @@ void EpubReaderActivity::render(RenderLock&& lock) {
 }
 
 void EpubReaderActivity::silentIndexNextChapterIfNeeded(const uint16_t viewportWidth, const uint16_t viewportHeight) {
-  if (SETTINGS.verticalTextMode) {
+  if (useVerticalText()) {
     if (!epub || !verticalSection || verticalSection->pageCount < 2) return;
     if (verticalSection->currentPage != verticalSection->pageCount - 2) return;
 
@@ -1591,4 +1600,16 @@ CrossPointPosition EpubReaderActivity::getCurrentPosition() const {
     localPos.hasParagraphIndex = true;
   }
   return localPos;
+}
+
+bool EpubReaderActivity::isJapaneseBook() const {
+  if (!epub) return false;
+  const auto& lang = epub->getLanguage();
+  return lang.size() >= 2 && lang[0] == 'j' && lang[1] == 'a';
+}
+
+bool EpubReaderActivity::useVerticalText() const {
+  if (verticalOverride == 0) return false;
+  if (verticalOverride == 1) return true;
+  return isJapaneseBook();
 }

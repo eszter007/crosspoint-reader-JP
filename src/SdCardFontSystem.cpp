@@ -57,9 +57,10 @@ void SdCardFontSystem::ensureLoaded(GfxRenderer& renderer) {
 
   const char* wantedFamily = SETTINGS.sdFontFamilyName;
 
-  // In vertical text mode with no explicit SD font, auto-select UDDigiKyokasho
+  // Auto-select UDDigiKyokasho when no explicit SD font is set and it's available.
+  // This gives the best vertical Japanese text experience by default.
   static constexpr const char* VERTICAL_DEFAULT_FONT = "UDDigiKyokasho";
-  if (wantedFamily[0] == '\0' && SETTINGS.verticalTextMode && registry_.findFamily(VERTICAL_DEFAULT_FONT)) {
+  if (wantedFamily[0] == '\0' && registry_.findFamily(VERTICAL_DEFAULT_FONT)) {
     wantedFamily = VERTICAL_DEFAULT_FONT;
   }
 

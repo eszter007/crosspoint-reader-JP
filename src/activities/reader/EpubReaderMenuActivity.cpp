@@ -10,9 +10,10 @@
 EpubReaderMenuActivity::EpubReaderMenuActivity(GfxRenderer& renderer, MappedInputManager& mappedInput,
                                                const std::string& title, const int currentPage, const int totalPages,
                                                const int bookProgressPercent, const uint8_t currentOrientation,
-                                               const bool hasFootnotes, const bool hasWordLookup)
+                                               const bool hasFootnotes, const bool hasWordLookup,
+                                               const bool showVerticalToggle, const bool verticalEnabled)
     : Activity("EpubReaderMenu", renderer, mappedInput),
-      menuItems(buildMenuItems(hasFootnotes, hasWordLookup)),
+      menuItems(buildMenuItems(hasFootnotes, hasWordLookup, showVerticalToggle, verticalEnabled)),
       title(title),
       pendingOrientation(currentOrientation),
       currentPage(currentPage),
@@ -20,9 +21,11 @@ EpubReaderMenuActivity::EpubReaderMenuActivity(GfxRenderer& renderer, MappedInpu
       bookProgressPercent(bookProgressPercent) {}
 
 std::vector<EpubReaderMenuActivity::MenuItem> EpubReaderMenuActivity::buildMenuItems(bool hasFootnotes,
-                                                                                       bool hasWordLookup) {
+                                                                                       bool hasWordLookup,
+                                                                                       bool showVerticalToggle,
+                                                                                       bool verticalEnabled) {
   std::vector<MenuItem> items;
-  items.reserve(13);
+  items.reserve(14);
   items.push_back({MenuAction::SELECT_CHAPTER, StrId::STR_SELECT_CHAPTER});
   if (hasFootnotes) {
     items.push_back({MenuAction::FOOTNOTES, StrId::STR_FOOTNOTES});
@@ -31,6 +34,10 @@ std::vector<EpubReaderMenuActivity::MenuItem> EpubReaderMenuActivity::buildMenuI
     items.push_back({MenuAction::WORD_LOOKUP, StrId::STR_WORD_LOOKUP});
   }
   items.push_back({MenuAction::TRANSLATE_PAGE, StrId::STR_TRANSLATE_PAGE});
+  if (showVerticalToggle) {
+    items.push_back({MenuAction::TOGGLE_VERTICAL,
+                     verticalEnabled ? StrId::STR_VERTICAL_TEXT_ON : StrId::STR_VERTICAL_TEXT_OFF});
+  }
   items.push_back({MenuAction::BOOKMARKS, StrId::STR_BOOKMARKS});
   items.push_back({MenuAction::ROTATE_SCREEN, StrId::STR_ORIENTATION});
   items.push_back({MenuAction::AUTO_PAGE_TURN, StrId::STR_AUTO_TURN_PAGES_PER_MIN});
