@@ -414,8 +414,8 @@ bool VerticalSection::extractParagraphsAndLayout(const int fontId, const uint16_
       }
     }
 
-    // Get actual image dimensions and scale to fit viewport preserving aspect ratio.
-    // Landscape images (wider than tall) are rotated 90° CW to fill the portrait screen.
+    // Get actual image dimensions. Store natural (unrotated) dimensions —
+    // ImageBlock::render handles rotation, scaling, and centering itself.
     int displayW = viewportWidth;
     int displayH = viewportHeight;
     bool rotated = false;
@@ -423,27 +423,11 @@ bool VerticalSection::extractParagraphsAndLayout(const int fontId, const uint16_
     if (decoder) {
       ImageDimensions dims = {0, 0};
       if (decoder->getDimensions(cachedPath, dims) && dims.width > 0 && dims.height > 0) {
-        // Rotate when the image orientation doesn't match the viewport:
-        // portrait viewport + landscape image, or landscape viewport + portrait image.
         const bool viewportIsPortrait = (viewportHeight > viewportWidth);
         const bool imageIsLandscape = (dims.width > dims.height);
-        if (viewportIsPortrait == imageIsLandscape) {
-          // Image doesn't match viewport — rotate 90° CW to fill screen better.
-          const float scaleX = static_cast<float>(viewportWidth) / dims.height;
-          const float scaleY = static_cast<float>(viewportHeight) / dims.width;
-          const float scale = (scaleX < scaleY) ? scaleX : scaleY;
-          displayW = static_cast<int>(dims.height * scale + 0.5f);
-          displayH = static_cast<int>(dims.width * scale + 0.5f);
-          rotated = true;
-        } else {
-          const float scaleX = static_cast<float>(viewportWidth) / dims.width;
-          const float scaleY = static_cast<float>(viewportHeight) / dims.height;
-          const float scale = (scaleX < scaleY) ? scaleX : scaleY;
-          displayW = static_cast<int>(dims.width * scale + 0.5f);
-          displayH = static_cast<int>(dims.height * scale + 0.5f);
-        }
-        if (displayW < 1) displayW = 1;
-        if (displayH < 1) displayH = 1;
+        rotated = (viewportIsPortrait == imageIsLandscape);
+        displayW = dims.width;
+        displayH = dims.height;
       }
     }
 
