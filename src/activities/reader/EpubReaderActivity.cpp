@@ -34,7 +34,10 @@
 #include "EpubReaderUtils.h"
 #include "KOReaderCredentialStore.h"
 #include "KOReaderSyncActivity.h"
+#include <ctime>
+
 #include "MappedInputManager.h"
+#include "ReadingStatsStore.h"
 #include "ProgressMapper.h"
 #include "QrDisplayActivity.h"
 #include "ReaderUtils.h"
@@ -129,6 +132,7 @@ void EpubReaderActivity::onEnter() {
   // Swallow the Confirm release that opened this book from the library,
   // so it doesn't immediately trigger the reader menu.
   ignoreNextConfirmRelease = true;
+  readingSessionStartMs = millis();
 
   if (!epub) {
     return;
@@ -179,6 +183,21 @@ void EpubReaderActivity::onEnter() {
 
 void EpubReaderActivity::onExit() {
   Activity::onExit();
+
+  // Record reading time for stats
+  if (readingSessionStartMs > 0) {
+    unsigned long elapsed = millis() - readingSessionStartMs;
+    uint16_t minutes = static_cast<uint16_t>(elapsed / 60000);
+    if (minutes > 0) {
+      time_t now = time(nullptr);
+      struct tm* t = localtime(&now);
+      READING_STATS.loadFromFile();
+      READING_STATS.addMinutes(static_cast<uint16_t>(t->tm_year + 1900),
+                               static_cast<uint8_t>(t->tm_mon + 1),
+                               static_cast<uint8_t>(t->tm_mday), minutes);
+      READING_STATS.saveToFile();
+    }
+  }
 
   // Reset orientation back to portrait for the rest of the UI
   renderer.setOrientation(GfxRenderer::Orientation::Portrait);

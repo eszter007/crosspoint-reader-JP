@@ -21,7 +21,7 @@
 #include "fontIds.h"
 
 int HomeActivity::getMenuItemCount() const {
-  int count = 4;  // File Browser, Recents, File transfer, Settings
+  int count = 5;  // Library, Browse Files, File Transfer, Insights, Settings
   if (!recentBooks.empty()) {
     count += recentBooks.size();
   }
@@ -251,6 +251,9 @@ void HomeActivity::loop() {
         case HomeMenuItem::FILE_TRANSFER:
           onFileTransferOpen();
           break;
+        case HomeMenuItem::READING_STATS:
+          onStatsOpen();
+          break;
         case HomeMenuItem::SETTINGS_MENU:
           onSettingsOpen();
           break;
@@ -286,8 +289,8 @@ void HomeActivity::render(RenderLock&&) {
 
   // Build menu items dynamically
   std::vector<const char*> menuItems = {tr(STR_MENU_RECENT_BOOKS), tr(STR_BROWSE_FILES), tr(STR_FILE_TRANSFER),
-                                        tr(STR_SETTINGS_TITLE)};
-  std::vector<UIIcon> menuIcons = {Library, Folder, Transfer, Settings};
+                                        tr(STR_STATS), tr(STR_SETTINGS_TITLE)};
+  std::vector<UIIcon> menuIcons = {Library, Folder, Transfer, Stats, Settings};
 
   if (hasOpdsServers) {
     menuItems.insert(menuItems.begin() + 2, tr(STR_OPDS_BROWSER));
@@ -333,5 +336,7 @@ void HomeActivity::onLibraryOpen() { activityManager.goToRecentBooks(); }
 void HomeActivity::onSettingsOpen() { activityManager.goToSettings(); }
 
 void HomeActivity::onFileTransferOpen() { activityManager.goToFileTransfer(); }
+
+void HomeActivity::onStatsOpen() { activityManager.goToReadingStats(); }
 
 void HomeActivity::onOpdsBrowserOpen() { activityManager.goToBrowser(); }

@@ -70,6 +70,17 @@ The home menu's **Library** has two tabs:
 
 Tab switching uses the same pattern as Settings: Confirm cycles tabs when the tab row is focused, hold Up/Down to switch tabs from anywhere.
 
+### Reading Stats
+
+The home menu shows a **Stats** entry that tracks your reading streaks and time:
+
+- **Streak counter** — consecutive days with at least 1 minute of reading, shown with a flame icon
+- **Weekly summary** — total minutes read this week
+- **Day-of-week grid** — each day of the current week shown as a circle; filled with a checkmark on days you read
+- **Today's reading** — minutes read today
+
+Reading time is recorded automatically when you close a book (minimum 1 minute to count). Stats persist across sessions in `/.crosspoint/reading_stats.bin`.
+
 ### Font Selection
 
 The reader uses whatever font is selected in Settings (built-in Noto Serif/Sans or SD card fonts like UDDigiKyokasho). No font is auto-overridden — the user's choice is always respected.
@@ -256,3 +267,5 @@ Key integration points:
 Built on top of [CrossPoint](https://github.com/crosspoint-reader/crosspoint-reader) — open-source e-reader firmware, community-built, fully hackable, free forever.
 
 Dictionary data from [JMdict](https://www.edrdg.org/jmdict/j_jmdict.html) and [Jitendex](https://github.com/stephenmk/Jitendex), used under their respective licenses.
+
+Icons by [Tabler Icons](https://tabler.io/icons) (MIT license).
