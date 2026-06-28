@@ -18,7 +18,7 @@ Japanese books are automatically detected from EPUB metadata (`<dc:language>ja</
 - Right-to-left column flow with proper line breaking (kinsoku rules)
 - Font-adaptive punctuation, bracket, and dash positioning (works with UDDigiKyokasho, Noto Serif, Noto Sans)
 - Bold, italic, and emphasis marks (sesame dots ﹅)
-- A per-book "Vertical Text: ON/OFF" toggle in the reader menu to override auto-detection
+- A per-book "Vertical Text: ON/OFF" toggle in the reader menu to override auto-detection (persists across reopens)
 
 ### Dictionary & Word Lookup
 
@@ -39,7 +39,7 @@ Open the reader menu and select **Word Lookup** to look up any word on the curre
 - **Smart word boundaries** — Pre-scans the page to find dictionary-matchable positions. Filters out single-character particles and conjugation fragments from results. Handles compound words and bound suffixes (設計士).
 - **Digit + counter grouping** — Numbers with counters (2年, 15人) shown together with the counter's reading
 - **Multiple readings** — Kanji with multiple dictionary entries show all readings sorted by frequency
-- **Scrollable definitions** — Long entries scroll with Up/Down. Word navigation with Left/Right.
+- **Scrollable definitions** — Long entries scroll with Up/Down. Word navigation with Left/Right
 
 ### Page Translation
 
@@ -157,8 +157,8 @@ The device needs WiFi access for translation. The emulator uses libcurl instead 
 ### Word Lookup
 
 1. Reader menu → **Word Lookup**
-2. **Up/Down** — navigate between matched words on the page
-3. **Left/Right** — scroll within a long definition
+2. **Left/Right** — navigate between matched words on the page
+3. **Up/Down** — scroll within a long definition
 4. **Back** — return to reading
 
 The position counter (e.g. 10/35) appears in the header. Words are pre-scanned so you only land on positions with actual dictionary matches.
@@ -172,7 +172,7 @@ The position counter (e.g. 10/35) appears in the header. Words are pre-scanned s
 
 ### Toggling Vertical Text
 
-For Japanese books, the reader menu shows **Vertical Text: ON/OFF**. Use this to switch between vertical and horizontal layout for the current book. The setting is per-book and resets when you reopen.
+For Japanese books, the reader menu shows **Vertical Text: ON/OFF**. Toggle it in-place without leaving the menu. The setting is per-book and persists across reopens.
 
 ---
 
@@ -184,7 +184,6 @@ This fork uses the same PlatformIO build system as upstream CrossPoint:
 # Clone
 git clone https://github.com/eszter007/crosspoint-reader-JP.git
 cd crosspoint-reader-JP
-git checkout claude/vertical-japanese-text-pyosmu
 
 # Build
 pio run
