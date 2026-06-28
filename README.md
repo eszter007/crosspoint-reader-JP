@@ -54,15 +54,25 @@ Reading aids rendered above (horizontal) or beside (vertical) kanji, with positi
 - Dedicated full-page images with aspect-aware rotation
 - No blank pages between consecutive images
 - Status bar respected for rotated images
+- SVG `<image>` elements (Calibre-generated cover pages) now render correctly
+
+### Home Screen
+
+- Reading progress percentage shown below the author on the "Continue Reading" card
+- Progress uses spine-aware calculation (matches the Library view)
 
 ### Library
 
 The home menu's **Library** has two tabs:
 
-- **Books** — Recent books as a 3-column cover grid. Each book displays its cover image with reading progress percentage below. Books without a cover show a placeholder icon with the title. Long-press a book to remove it from the list.
-- **Shelves** — Folders on the SD card that contain books, shown as a list with a cover thumbnail, folder name, book count, and a chevron. Tap a shelf to see all books in that folder as a cover grid with progress — not just recent books, but every book file in the folder.
+- **Books** — All books on the SD card as a 3-column cover grid, sorted by recency (recently opened first, then alphabetical). Covers and titles are auto-generated from EPUB metadata on first visit. A peek row hints at more content below the button bar.
+- **Shelves** — Folders on the SD card that contain books, shown as a list with a cover thumbnail, folder name, book count, and a chevron. Tap a shelf to see all books in that folder as a cover grid with progress.
 
 Tab switching uses the same pattern as Settings: Confirm cycles tabs when the tab row is focused, hold Up/Down to switch tabs from anywhere.
+
+### Font Selection
+
+The reader uses whatever font is selected in Settings (built-in Noto Serif/Sans or SD card fonts like UDDigiKyokasho). No font is auto-overridden — the user's choice is always respected.
 
 ---
 

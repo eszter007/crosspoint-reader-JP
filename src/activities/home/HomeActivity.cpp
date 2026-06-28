@@ -49,6 +49,51 @@ void HomeActivity::loadRecentBooks(int maxBooks) {
 
     recentBooks.push_back(book);
   }
+
+  // Compute reading progress for the first (continue reading) book.
+  currentBookProgress = -1;
+  if (!recentBooks.empty()) {
+    const auto& path = recentBooks[0].path;
+    std::string cachePath;
+    if (FsHelpers::hasEpubExtension(path))
+      cachePath = "/.crosspoint/epub_" + std::to_string(std::hash<std::string>{}(path));
+    else if (FsHelpers::hasXtcExtension(path))
+      cachePath = "/.crosspoint/xtc_" + std::to_string(std::hash<std::string>{}(path));
+    if (!cachePath.empty()) {
+      HalFile f;
+      if (Storage.openFileForRead("HOME", cachePath + "/progress.bin", f)) {
+        uint8_t data[6];
+        if (f.read(data, 6) == 6) {
+          uint16_t spineIndex = data[0] | (data[1] << 8);
+          uint16_t currentPage = data[2] | (data[3] << 8);
+          uint16_t pageCount = data[4] | (data[5] << 8);
+          f.close();
+          // Use spine-aware progress (same as library) for whole-book percentage.
+          HalFile bookFile;
+          if (Storage.openFileForRead("HOME", cachePath + "/book.bin", bookFile)) {
+            uint8_t version;
+            uint32_t lutOffset;
+            uint16_t spineCount;
+            if (bookFile.read(&version, 1) == 1) {
+              bookFile.read(reinterpret_cast<uint8_t*>(&lutOffset), 4);
+              bookFile.read(reinterpret_cast<uint8_t*>(&spineCount), 2);
+              if (spineCount > 0 && pageCount > 0) {
+                float sectionProgress = static_cast<float>(currentPage) / static_cast<float>(pageCount);
+                float overallProgress = (static_cast<float>(spineIndex) + sectionProgress) / static_cast<float>(spineCount);
+                currentBookProgress = static_cast<int>(overallProgress * 100.0f + 0.5f);
+                if (currentBookProgress > 100) currentBookProgress = 100;
+              }
+            }
+          }
+          if (currentBookProgress < 0 && pageCount > 0) {
+            currentBookProgress = currentPage * 100 / pageCount;
+          }
+        } else {
+          f.close();
+        }
+      }
+    }
+  }
 }
 
 void HomeActivity::loadRecentCovers(int coverHeight) {
@@ -237,7 +282,7 @@ void HomeActivity::render(RenderLock&&) {
 
   GUI.drawRecentBookCover(renderer, Rect{0, metrics.homeTopPadding, pageWidth, metrics.homeCoverTileHeight},
                           recentBooks, selectorIndex, coverRendered, coverBufferStored, bufferRestored,
-                          std::bind(&HomeActivity::storeCoverBuffer, this));
+                          std::bind(&HomeActivity::storeCoverBuffer, this), currentBookProgress);
 
   // Build menu items dynamically
   std::vector<const char*> menuItems = {tr(STR_MENU_RECENT_BOOKS), tr(STR_BROWSE_FILES), tr(STR_FILE_TRANSFER),
