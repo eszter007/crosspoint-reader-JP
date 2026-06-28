@@ -126,6 +126,10 @@ void moveFinishedBookToReadFolder(const std::string& srcPath, const std::string&
 void EpubReaderActivity::onEnter() {
   Activity::onEnter();
 
+  // Swallow the Confirm release that opened this book from the library,
+  // so it doesn't immediately trigger the reader menu.
+  ignoreNextConfirmRelease = true;
+
   if (!epub) {
     return;
   }

@@ -11,6 +11,8 @@
 #include <cstdio>
 #include <memory>
 
+#include <Epub.h>
+
 #include "MappedInputManager.h"
 #include "RecentBooksStore.h"
 #include "activities/util/ConfirmationActivity.h"
@@ -20,10 +22,10 @@
 
 namespace {
 constexpr unsigned long LONG_PRESS_MS = 1000;
-constexpr int COVER_ASPECT_NUM = 3;
-constexpr int COVER_ASPECT_DEN = 4;
-constexpr int SHELF_THUMB_WIDTH = 40;
-constexpr int SHELF_THUMB_HEIGHT = 53;
+constexpr int COVER_ASPECT_NUM = 2;
+constexpr int COVER_ASPECT_DEN = 3;
+constexpr int SHELF_THUMB_WIDTH = 36;
+constexpr int SHELF_THUMB_HEIGHT = 54;
 }  // namespace
 
 int RecentBooksActivity::getCellHeight(int cellWidth) const {
@@ -43,7 +45,79 @@ int RecentBooksActivity::getContentItemCount() const {
   return static_cast<int>(shelves.size());
 }
 
-void RecentBooksActivity::loadRecentBooks() { recentBooks = RECENT_BOOKS.getBooks(); }
+void RecentBooksActivity::loadRecentBooks() {
+  // Start with recent books (most recently opened first).
+  recentBooks = RECENT_BOOKS.getBooks();
+
+  // Scan the SD card root for all book files not already in recents.
+  constexpr size_t NAME_BUF = 500;
+  auto nameBuf = makeUniqueNoThrow<char[]>(NAME_BUF);
+  if (!nameBuf) return;
+
+  auto scanDir = [&](const char* dirPath) {
+    auto dir = Storage.open(dirPath);
+    if (!dir || !dir.isDirectory()) return;
+    dir.rewindDirectory();
+    for (auto f = dir.openNextFile(); f; f = dir.openNextFile()) {
+      f.getName(nameBuf.get(), NAME_BUF);
+      if (nameBuf[0] == '.' || f.isDirectory()) continue;
+      std::string_view fn{nameBuf.get()};
+      if (!FsHelpers::hasEpubExtension(fn) && !FsHelpers::hasXtcExtension(fn) &&
+          !FsHelpers::hasTxtExtension(fn) && !FsHelpers::hasMarkdownExtension(fn))
+        continue;
+      std::string fullPath = std::string(dirPath);
+      if (fullPath.back() != '/') fullPath += '/';
+      fullPath += fn;
+      bool alreadyInRecents = false;
+      for (const auto& r : recentBooks) {
+        if (r.path == fullPath) { alreadyInRecents = true; break; }
+      }
+      if (alreadyInRecents) continue;
+      RecentBook book;
+      book.path = std::move(fullPath);
+      auto dot = fn.find_last_of('.');
+      book.title = std::string(dot != std::string_view::npos ? fn.substr(0, dot) : fn);
+      recentBooks.push_back(std::move(book));
+    }
+    dir.close();
+  };
+  scanDir("/");
+
+  // Also scan subdirectories one level deep.
+  auto root = Storage.open("/");
+  if (root && root.isDirectory()) {
+    root.rewindDirectory();
+    for (auto f = root.openNextFile(); f; f = root.openNextFile()) {
+      f.getName(nameBuf.get(), NAME_BUF);
+      if (nameBuf[0] == '.' || !f.isDirectory()) continue;
+      if (strcmp(nameBuf.get(), "System Volume Information") == 0) continue;
+      if (strcmp(nameBuf.get(), "dict") == 0) continue;
+      std::string subPath = std::string("/") + nameBuf.get();
+      scanDir(subPath.c_str());
+    }
+    root.close();
+  }
+
+  // Generate cover thumbnails for books that don't have one yet.
+  const auto& metrics = UITheme::getInstance().getMetrics();
+  const int thumbH = metrics.homeCoverHeight > 0 ? metrics.homeCoverHeight : 120;
+  for (auto& book : recentBooks) {
+    if (!book.coverBmpPath.empty()) continue;
+    if (!FsHelpers::hasEpubExtension(book.path)) continue;
+    std::string cachePath = "/.crosspoint/epub_" + std::to_string(std::hash<std::string>{}(book.path));
+    std::string thumbPath = cachePath + "/thumb_" + std::to_string(thumbH) + ".bmp";
+    if (Storage.exists(thumbPath.c_str())) {
+      book.coverBmpPath = cachePath + "/thumb_[HEIGHT].bmp";
+      continue;
+    }
+    Epub epub(book.path, "/.crosspoint");
+    if (epub.load(true, true) && epub.generateThumbBmp(thumbH)) {
+      book.coverBmpPath = cachePath + "/thumb_[HEIGHT].bmp";
+      const auto& title = epub.getTitle();
+      if (!title.empty()) book.title = title;
+    }
+  }
+}
 
 void RecentBooksActivity::loadBookProgress() {
   bookProgress.clear();
@@ -64,13 +138,14 @@ void RecentBooksActivity::loadShelves() {
     std::string name = (lastSlash != std::string::npos && lastSlash < folder.size() - 1)
                            ? folder.substr(lastSlash + 1)
                            : folder;
-    if (folder == "/") name = "/";
+    if (folder == "/") name = "All";
 
     bool found = false;
     for (auto& shelf : shelves) {
       if (shelf.folderPath == folder) {
         if (shelf.coverBmpPath.empty() && !book.coverBmpPath.empty()) {
           shelf.coverBmpPath = book.coverBmpPath;
+          shelf.coverBookPath = book.path;
         }
         found = true;
         break;
@@ -82,6 +157,7 @@ void RecentBooksActivity::loadShelves() {
       shelf.folderPath = folder;
       shelf.folderName = name;
       shelf.coverBmpPath = book.coverBmpPath;
+      if (!book.coverBmpPath.empty()) shelf.coverBookPath = book.path;
       shelf.bookCount = 0;
       shelves.push_back(std::move(shelf));
     }
@@ -109,6 +185,16 @@ void RecentBooksActivity::loadShelves() {
 
   std::sort(shelves.begin(), shelves.end(),
             [](const ShelfInfo& a, const ShelfInfo& b) { return a.folderName < b.folderName; });
+
+  // Generate a shelf-height thumbnail for each shelf's cover so it renders 1:1
+  // (the bitmap downscaler produces all-black at heavy reductions).
+  for (auto& shelf : shelves) {
+    if (shelf.coverBookPath.empty() || !FsHelpers::hasEpubExtension(shelf.coverBookPath)) continue;
+    Epub epub(shelf.coverBookPath, "/.crosspoint");
+    if (epub.load(true, true) && epub.generateThumbBmp(SHELF_THUMB_HEIGHT)) {
+      shelf.shelfThumbPath = epub.getThumbBmpPath(SHELF_THUMB_HEIGHT);
+    }
+  }
 }
 
 void RecentBooksActivity::loadShelfBooks(const std::string& folderPath) {
@@ -451,12 +537,15 @@ void RecentBooksActivity::renderBooksTab(int contentTop, int contentHeight) {
         if (Storage.openFileForRead("LIB", coverPath, file)) {
           Bitmap bitmap(file);
           if (bitmap.parseHeaders() == BmpReaderError::Ok) {
-            const float bmpW = static_cast<float>(bitmap.getWidth());
-            const float bmpH = static_cast<float>(bitmap.getHeight());
-            const float bmpRatio = bmpW / bmpH;
+            const float bmpRatio = static_cast<float>(bitmap.getWidth()) / static_cast<float>(bitmap.getHeight());
             const float cellRatio = static_cast<float>(coverWidth) / static_cast<float>(coverHeight);
-            const float cropX = std::max(0.0f, 1.0f - (cellRatio / bmpRatio));
-            renderer.drawBitmap(bitmap, coverX, coverY, coverWidth, coverHeight, cropX);
+            float cropX = 0.0f, cropY = 0.0f;
+            if (bmpRatio > cellRatio) {
+              cropX = 1.0f - (cellRatio / bmpRatio);
+            } else {
+              cropY = 1.0f - (bmpRatio / cellRatio);
+            }
+            renderer.drawBitmap(bitmap, coverX, coverY, coverWidth, coverHeight, cropX, cropY);
             hasCover = true;
           }
           file.close();
@@ -524,37 +613,43 @@ void RecentBooksActivity::renderShelvesTab(int contentTop, int contentHeight) {
     const bool selected = (i == selectedItem);
 
     if (selected) {
-      renderer.fillRect(0, itemY, pageWidth, rowHeight, true);
+      renderer.fillRoundedRect(metrics.contentSidePadding - 6, itemY - 4,
+                               pageWidth - 2 * metrics.contentSidePadding + 12, rowHeight + 8,
+                               SELECTION_RADIUS, Color::LightGray);
     }
 
     int thumbX = metrics.contentSidePadding + 4;
     int thumbY = itemY + (rowHeight - SHELF_THUMB_HEIGHT) / 2;
 
     bool hasThumb = false;
-    if (!shelf.coverBmpPath.empty()) {
-      const std::string coverPath = UITheme::getCoverThumbPath(shelf.coverBmpPath, thumbH);
+    // The shelf-height thumbnail (generated in loadShelves) renders 1:1, avoiding
+    // the bitmap downscaler that produces all-black at heavy reductions.
+    if (!shelf.shelfThumbPath.empty()) {
       HalFile file;
-      if (Storage.openFileForRead("LIB", coverPath, file)) {
+      if (Storage.openFileForRead("LIB", shelf.shelfThumbPath, file)) {
         Bitmap bitmap(file);
         if (bitmap.parseHeaders() == BmpReaderError::Ok) {
-          renderer.drawBitmap(bitmap, thumbX, thumbY, SHELF_THUMB_WIDTH, SHELF_THUMB_HEIGHT);
+          // Center the (already small) thumb in the slot; no scaling needed.
+          const int bw = bitmap.getWidth();
+          const int bh = bitmap.getHeight();
+          const int dx = thumbX + (SHELF_THUMB_WIDTH - bw) / 2;
+          const int dy = thumbY + (SHELF_THUMB_HEIGHT - bh) / 2;
+          renderer.drawBitmap(bitmap, dx, dy, bw, bh);
           hasThumb = true;
         }
         file.close();
       }
     }
 
-    renderer.drawRect(thumbX, thumbY, SHELF_THUMB_WIDTH, SHELF_THUMB_HEIGHT, !selected);
-
     if (!hasThumb) {
-      renderer.drawIcon(CoverIcon, thumbX + (SHELF_THUMB_WIDTH - 32) / 2, thumbY + (SHELF_THUMB_HEIGHT - 32) / 2, 32,
-                        32);
+      renderer.drawRect(thumbX, thumbY, SHELF_THUMB_WIDTH, SHELF_THUMB_HEIGHT, true);
     }
 
     const int textX = thumbX + SHELF_THUMB_WIDTH + 12;
-    const int nameY = itemY + rowHeight / 2 - renderer.getLineHeight(UI_12_FONT_ID);
+    const int smallLH = renderer.getLineHeight(SMALL_FONT_ID);
+    const int nameY = itemY + rowHeight / 2 - smallLH;
 
-    renderer.drawText(UI_12_FONT_ID, textX, nameY, shelf.folderName.c_str(), !selected, EpdFontFamily::BOLD);
+    renderer.drawText(UI_10_FONT_ID, textX, nameY, shelf.folderName.c_str(), true, EpdFontFamily::BOLD);
 
     char countBuf[32];
     if (shelf.bookCount == 1) {
@@ -562,11 +657,15 @@ void RecentBooksActivity::renderShelvesTab(int contentTop, int contentHeight) {
     } else {
       snprintf(countBuf, sizeof(countBuf), tr(STR_SHELF_BOOK_COUNT_N), shelf.bookCount);
     }
-    renderer.drawText(SMALL_FONT_ID, textX, nameY + renderer.getLineHeight(UI_12_FONT_ID) + 2, countBuf, !selected);
+    renderer.drawText(SMALL_FONT_ID, textX, nameY + smallLH + 1, countBuf, true);
 
+    const int chevronSize = 6;
     const int chevronX = pageWidth - metrics.contentSidePadding - chevronMargin;
     const int chevronY = itemY + rowHeight / 2;
-    renderer.drawText(UI_12_FONT_ID, chevronX, chevronY - renderer.getLineHeight(UI_12_FONT_ID) / 2, ">", !selected);
+    renderer.drawLine(chevronX, chevronY - chevronSize, chevronX + chevronSize, chevronY, true);
+    renderer.drawLine(chevronX + chevronSize, chevronY, chevronX, chevronY + chevronSize, true);
+    renderer.drawLine(chevronX + 1, chevronY - chevronSize, chevronX + chevronSize + 1, chevronY, true);
+    renderer.drawLine(chevronX + chevronSize + 1, chevronY, chevronX + 1, chevronY + chevronSize, true);
   }
 
   if (shelfCount > visibleItems) {
@@ -624,12 +723,15 @@ void RecentBooksActivity::renderShelfBooksView(int contentTop, int contentHeight
         if (Storage.openFileForRead("LIB", coverPath, file)) {
           Bitmap bitmap(file);
           if (bitmap.parseHeaders() == BmpReaderError::Ok) {
-            const float bmpW = static_cast<float>(bitmap.getWidth());
-            const float bmpH = static_cast<float>(bitmap.getHeight());
-            const float bmpRatio = bmpW / bmpH;
+            const float bmpRatio = static_cast<float>(bitmap.getWidth()) / static_cast<float>(bitmap.getHeight());
             const float cellRatio = static_cast<float>(coverWidth) / static_cast<float>(coverHeight);
-            const float cropX = std::max(0.0f, 1.0f - (cellRatio / bmpRatio));
-            renderer.drawBitmap(bitmap, coverX, coverY, coverWidth, coverHeight, cropX);
+            float cropX = 0.0f, cropY = 0.0f;
+            if (bmpRatio > cellRatio) {
+              cropX = 1.0f - (cellRatio / bmpRatio);
+            } else {
+              cropY = 1.0f - (bmpRatio / cellRatio);
+            }
+            renderer.drawBitmap(bitmap, coverX, coverY, coverWidth, coverHeight, cropX, cropY);
             hasCover = true;
           }
           file.close();
