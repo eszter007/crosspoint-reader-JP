@@ -138,9 +138,9 @@ void EpubReaderActivity::onEnter() {
 
   HalFile f;
   if (Storage.openFileForRead("ERS", epub->getCachePath() + "/progress.bin", f)) {
-    uint8_t data[6];
-    int dataSize = f.read(data, 6);
-    if (dataSize == 4 || dataSize == 6) {
+    uint8_t data[7];
+    int dataSize = f.read(data, 7);
+    if (dataSize >= 4) {
       currentSpineIndex = data[0] + (data[1] << 8);
       nextPageNumber = data[2] + (data[3] << 8);
       if (nextPageNumber == UINT16_MAX) {
@@ -153,8 +153,12 @@ void EpubReaderActivity::onEnter() {
       cachedSpineIndex = currentSpineIndex;
       LOG_DBG("ERS", "Loaded cache: %d, %d", currentSpineIndex, nextPageNumber);
     }
-    if (dataSize == 6) {
+    if (dataSize >= 6) {
       cachedChapterTotalPageCount = data[4] + (data[5] << 8);
+    }
+    if (dataSize >= 7) {
+      verticalOverride = static_cast<int8_t>(data[6]);
+      LOG_DBG("ERS", "Restored vertical override: %d", verticalOverride);
     }
   }
   // We may want a better condition to detect if we are opening for the first time.
@@ -610,7 +614,7 @@ void EpubReaderActivity::onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction 
           verticalSection.reset();
           epub->clearCache();
           epub->setupCacheDir();
-          if (!saveProgress(backupSpine, backupPage, backupPageCount)) {
+          if (!saveProgress(backupSpine, backupPage, backupPageCount, verticalOverride)) {
             LOG_ERR("ERS", "Failed to save progress before cache clear");
           }
         }
@@ -708,7 +712,7 @@ bool EpubReaderActivity::launchKOReaderSync() {
 
   // Persist current position so the reader resumes at the right page on return.
   // goToReader() depends on this file, so abort the sync if the write fails.
-  if (!saveProgress(currentSpineIndex, currentPage, totalPages)) {
+  if (!saveProgress(currentSpineIndex, currentPage, totalPages, verticalOverride)) {
     LOG_ERR("KOSync", "Aborting sync because current progress could not be saved");
     pendingSyncSaveError = true;
     requestUpdate();
@@ -1023,7 +1027,7 @@ void EpubReaderActivity::render(RenderLock&& lock) {
 
     renderStatusBar();
     ReaderUtils::displayWithRefreshCycle(renderer, pagesUntilFullRefresh);
-    saveProgress(currentSpineIndex, verticalSection->currentPage, verticalSection->pageCount);
+    saveProgress(currentSpineIndex, verticalSection->currentPage, verticalSection->pageCount, verticalOverride);
 
     showPendingSyncSaveError();
 
@@ -1161,7 +1165,7 @@ void EpubReaderActivity::render(RenderLock&& lock) {
     LOG_DBG("ERS", "Rendered page in %dms", millis() - start);
   }
   silentIndexNextChapterIfNeeded(viewportWidth, viewportHeight);
-  saveProgress(currentSpineIndex, section->currentPage, section->pageCount);
+  saveProgress(currentSpineIndex, section->currentPage, section->pageCount, verticalOverride);
 
   showPendingSyncSaveError();
 
@@ -1225,8 +1229,8 @@ void EpubReaderActivity::silentIndexNextChapterIfNeeded(const uint16_t viewportW
   }
 }
 
-bool EpubReaderActivity::saveProgress(int spineIndex, int currentPage, int pageCount) {
-  return EpubReaderUtils::saveProgress(*epub, spineIndex, currentPage, pageCount);
+bool EpubReaderActivity::saveProgress(int spineIndex, int currentPage, int pageCount, int8_t vertOverride) {
+  return EpubReaderUtils::saveProgress(*epub, spineIndex, currentPage, pageCount, vertOverride);
 }
 void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int orientedMarginTop,
                                         const int orientedMarginRight, const int orientedMarginBottom,
