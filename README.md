@@ -57,7 +57,12 @@ Reading aids rendered above (horizontal) or beside (vertical) kanji, with positi
 
 ### Library
 
-The home menu's **Library** shows recent books as a cover grid (3 columns) instead of a text list. Each book displays its cover image with reading progress percentage below. Books without a cover show a placeholder icon with the title. Long-press a book to remove it from the list.
+The home menu's **Library** has two tabs:
+
+- **Books** — Recent books as a 3-column cover grid. Each book displays its cover image with reading progress percentage below. Books without a cover show a placeholder icon with the title. Long-press a book to remove it from the list.
+- **Shelves** — Folders on the SD card that contain books, shown as a list with a cover thumbnail, folder name, book count, and a chevron. Tap a shelf to see all books in that folder as a cover grid with progress — not just recent books, but every book file in the folder.
+
+Tab switching uses the same pattern as Settings: Confirm cycles tabs when the tab row is focused, hold Up/Down to switch tabs from anywhere.
 
 ---
 

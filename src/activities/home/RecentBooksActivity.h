@@ -13,11 +13,13 @@ class RecentBooksActivity final : public Activity {
  private:
   ButtonNavigator buttonNavigator;
 
-  size_t selectorIndex = 0;
+  int selectedTab = 0;
+  int contentIndex = 0;
   int scrollRow = 0;
 
   bool longPressFired = false;
 
+  // Books tab
   std::vector<RecentBook> recentBooks;
 
   struct BookProgress {
@@ -25,6 +27,28 @@ class RecentBooksActivity final : public Activity {
   };
   std::vector<BookProgress> bookProgress;
 
+  // Shelves tab
+  struct ShelfInfo {
+    std::string folderPath;
+    std::string folderName;
+    std::string coverBmpPath;
+    int bookCount = 0;
+  };
+  std::vector<ShelfInfo> shelves;
+
+  // Shelf detail view
+  struct ShelfBook {
+    std::string path;
+    std::string title;
+    std::string coverBmpPath;
+  };
+  std::vector<ShelfBook> shelfBooks;
+  std::vector<BookProgress> shelfBookProgress;
+  int openShelfIndex = -1;
+  int shelfContentIndex = 0;
+  int shelfScrollRow = 0;
+
+  static constexpr int TAB_COUNT = 2;
   static constexpr int GRID_COLS = 3;
   static constexpr int COVER_PADDING = 6;
   static constexpr int CELL_TEXT_GAP = 4;
@@ -35,7 +59,14 @@ class RecentBooksActivity final : public Activity {
 
   void loadRecentBooks();
   void loadBookProgress();
+  void loadShelves();
+  void loadShelfBooks(const std::string& folderPath);
   int readProgressPercent(const std::string& bookPath) const;
+
+  int getContentItemCount() const;
+  void renderBooksTab(int contentTop, int contentHeight);
+  void renderShelvesTab(int contentTop, int contentHeight);
+  void renderShelfBooksView(int contentTop, int contentHeight);
 
   void promptRemoveBook(const std::string& path, const std::string& title);
 
