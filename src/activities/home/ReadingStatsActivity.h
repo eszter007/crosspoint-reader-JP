@@ -5,6 +5,7 @@
 class ReadingStatsActivity final : public Activity {
   ButtonNavigator buttonNavigator;
   int scrollOffset = 0;
+  int maxScrollOffset = 0;
   // Calendar month navigation
   uint16_t calYear;
   uint8_t calMonth;

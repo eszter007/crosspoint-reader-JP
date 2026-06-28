@@ -77,11 +77,18 @@ void ReadingStatsActivity::loop() {
   }
   // Up/Down to scroll
   buttonNavigator.onPressAndContinuous({MappedInputManager::Button::Down}, [this] {
-    const int maxScroll = 500;
-    if (scrollOffset < maxScroll) { scrollOffset += 40; requestUpdate(); }
+    if (scrollOffset < maxScrollOffset) {
+      scrollOffset += 40;
+      if (scrollOffset > maxScrollOffset) scrollOffset = maxScrollOffset;
+      requestUpdate();
+    }
   });
   buttonNavigator.onPressAndContinuous({MappedInputManager::Button::Up}, [this] {
-    if (scrollOffset > 0) { scrollOffset -= 40; if (scrollOffset < 0) scrollOffset = 0; requestUpdate(); }
+    if (scrollOffset > 0) {
+      scrollOffset -= 40;
+      if (scrollOffset < 0) scrollOffset = 0;
+      requestUpdate();
+    }
   });
 }
 
@@ -303,6 +310,12 @@ void ReadingStatsActivity::render(RenderLock&&) {
       renderer.drawText(SMALL_FONT_ID, cx - dw / 2, dy, dayBuf, true);
     }
   }
+
+  // Compute max scroll: content bottom (y + calH) minus the visible area.
+  const int contentEndY = y + calH + 10;  // 10px bottom margin
+  const int visibleHeight = renderer.getScreenHeight() - headerBottom - 50;  // 50 for button hints
+  maxScrollOffset = contentEndY - headerBottom - visibleHeight + scrollOffset;
+  if (maxScrollOffset < 0) maxScrollOffset = 0;
 
   // Redraw header on top of scrolled content so text doesn't bleed through.
   // Clear only up to the header line, then redraw the header (which draws the line).
