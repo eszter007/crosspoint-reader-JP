@@ -55,6 +55,10 @@ Reading aids rendered above (horizontal) or beside (vertical) kanji, with positi
 - No blank pages between consecutive images
 - Status bar respected for rotated images
 
+### Library
+
+The home menu's **Library** shows recent books as a cover grid (3 columns) instead of a text list. Each book displays its cover image with reading progress percentage below. Books without a cover show a placeholder icon with the title. Long-press a book to remove it from the list.
+
 ---
 
 ## Setup
