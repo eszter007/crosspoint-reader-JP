@@ -14,18 +14,29 @@ class RecentBooksActivity final : public Activity {
   ButtonNavigator buttonNavigator;
 
   size_t selectorIndex = 0;
+  int scrollRow = 0;
 
-  // Set when a long-press has fired; input is swallowed until Confirm is released
-  // again so the release doesn't also open the book.
   bool longPressFired = false;
 
-  // Recent tab state
   std::vector<RecentBook> recentBooks;
 
-  // Data loading
-  void loadRecentBooks();
+  struct BookProgress {
+    int percent = -1;
+  };
+  std::vector<BookProgress> bookProgress;
 
-  // Show an OK/Cancel prompt to remove the given book from the Recent Books list.
+  static constexpr int GRID_COLS = 3;
+  static constexpr int COVER_PADDING = 6;
+  static constexpr int CELL_TEXT_GAP = 4;
+  static constexpr int SELECTION_RADIUS = 6;
+
+  int getVisibleRows(int cellHeight, int contentHeight) const;
+  int getCellHeight(int cellWidth) const;
+
+  void loadRecentBooks();
+  void loadBookProgress();
+  int readProgressPercent(const std::string& bookPath) const;
+
   void promptRemoveBook(const std::string& path, const std::string& title);
 
  public:
