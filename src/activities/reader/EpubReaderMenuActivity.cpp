@@ -16,6 +16,7 @@ EpubReaderMenuActivity::EpubReaderMenuActivity(GfxRenderer& renderer, MappedInpu
       menuItems(buildMenuItems(hasFootnotes, hasWordLookup, showVerticalToggle, verticalEnabled)),
       title(title),
       pendingOrientation(currentOrientation),
+      pendingVerticalEnabled(verticalEnabled),
       currentPage(currentPage),
       totalPages(totalPages),
       bookProgressPercent(bookProgressPercent) {}
@@ -84,13 +85,23 @@ void EpubReaderMenuActivity::loop() {
       return;
     }
 
-    setResult(MenuResult{static_cast<int>(selectedAction), pendingOrientation, selectedPageTurnOption});
+    if (selectedAction == MenuAction::TOGGLE_VERTICAL) {
+      pendingVerticalEnabled = !pendingVerticalEnabled;
+      menuItems[selectedIndex].labelId =
+          pendingVerticalEnabled ? StrId::STR_VERTICAL_TEXT_ON : StrId::STR_VERTICAL_TEXT_OFF;
+      requestUpdate();
+      return;
+    }
+
+    setResult(MenuResult{static_cast<int>(selectedAction), pendingOrientation, selectedPageTurnOption,
+                         static_cast<int8_t>(pendingVerticalEnabled ? 1 : 0)});
     finish();
     return;
   } else if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
     ActivityResult result;
     result.isCancelled = true;
-    result.data = MenuResult{-1, pendingOrientation, selectedPageTurnOption};
+    result.data = MenuResult{-1, pendingOrientation, selectedPageTurnOption,
+                             static_cast<int8_t>(pendingVerticalEnabled ? 1 : 0)};
     setResult(std::move(result));
     finish();
     return;

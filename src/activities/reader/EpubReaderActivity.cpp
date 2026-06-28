@@ -139,26 +139,17 @@ void EpubReaderActivity::onEnter() {
   HalFile f;
   if (Storage.openFileForRead("ERS", epub->getCachePath() + "/progress.bin", f)) {
     uint8_t data[7];
-    int dataSize = f.read(data, 7);
-    if (dataSize >= 4) {
+    if (f.read(data, 7) == 7) {
       currentSpineIndex = data[0] + (data[1] << 8);
       nextPageNumber = data[2] + (data[3] << 8);
       if (nextPageNumber == UINT16_MAX) {
-        // UINT16_MAX is an in-memory navigation sentinel for "open previous
-        // chapter on its last page". It should never be treated as persisted
-        // resume state after sleep or reopen.
         LOG_DBG("ERS", "Ignoring stale last-page sentinel from progress cache");
         nextPageNumber = 0;
       }
       cachedSpineIndex = currentSpineIndex;
-      LOG_DBG("ERS", "Loaded cache: %d, %d", currentSpineIndex, nextPageNumber);
-    }
-    if (dataSize >= 6) {
       cachedChapterTotalPageCount = data[4] + (data[5] << 8);
-    }
-    if (dataSize >= 7) {
       verticalOverride = static_cast<int8_t>(data[6]);
-      LOG_DBG("ERS", "Restored vertical override: %d", verticalOverride);
+      LOG_DBG("ERS", "Loaded cache: spine=%d page=%d vertical=%d", currentSpineIndex, nextPageNumber, verticalOverride);
     }
   }
   // We may want a better condition to detect if we are opening for the first time.
@@ -294,13 +285,18 @@ void EpubReaderActivity::loop() {
                                  SETTINGS.orientation, !currentPageFootnotes.empty(), hasWordLookup,
                                  showVerticalToggle, useVerticalText()),
                              [this](const ActivityResult& result) {
-                               // Always apply orientation change even if the menu was cancelled
                                const auto& menu = std::get<MenuResult>(result.data);
                                applyOrientation(menu.orientation);
                                toggleAutoPageTurn(menu.pageTurnOption);
+                               if (menu.verticalOverride >= 0 && menu.verticalOverride != (useVerticalText() ? 1 : 0)) {
+                                 verticalOverride = menu.verticalOverride;
+                                 section.reset();
+                                 verticalSection.reset();
+                               }
                                if (!result.isCancelled) {
                                  onReaderMenuConfirm(static_cast<EpubReaderMenuActivity::MenuAction>(menu.action));
                                }
+                               requestUpdate();
                              });
     }
   }
@@ -675,13 +671,8 @@ void EpubReaderActivity::onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction 
       }
       break;
     }
-    case EpubReaderMenuActivity::MenuAction::TOGGLE_VERTICAL: {
-      verticalOverride = useVerticalText() ? 0 : 1;
-      section.reset();
-      verticalSection.reset();
-      requestUpdate();
+    case EpubReaderMenuActivity::MenuAction::TOGGLE_VERTICAL:
       break;
-    }
   }
 }
 
