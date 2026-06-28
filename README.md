@@ -70,14 +70,17 @@ The home menu's **Library** has two tabs:
 
 Tab switching uses the same pattern as Settings: Confirm cycles tabs when the tab row is focused, hold Up/Down to switch tabs from anywhere.
 
-### Reading Stats
+### Insights
 
-The home menu shows a **Stats** entry that tracks your reading streaks and time:
+The home menu shows an **Insights** entry (between File Transfer and Settings) that tracks your reading activity:
 
-- **Streak counter** — consecutive days with at least 1 minute of reading, shown with a flame icon
-- **Weekly summary** — total minutes read this week
-- **Day-of-week grid** — each day of the current week shown as a circle; filled with a checkmark on days you read
-- **Today's reading** — minutes read today
+- **Streak widget** — flame icon with current streak count, weekly minutes, and a Mon–Sun day grid with checkmark circles for days you read
+- **Stat cards** (2x2 grid):
+  - Books finished
+  - Days read
+  - Total reading time
+  - Longest streak
+- **Monthly calendar** — navigate months with Left/Right buttons. Days you read are shown as filled black circles. Today is shown with an outline circle. A "X days read" subtitle summarizes each month.
 
 Reading time is recorded automatically when you close a book (minimum 1 minute to count). Stats persist across sessions in `/.crosspoint/reading_stats.bin`.
 
