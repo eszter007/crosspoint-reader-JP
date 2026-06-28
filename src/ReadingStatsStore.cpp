@@ -7,7 +7,7 @@
 
 ReadingStatsStore ReadingStatsStore::instance;
 
-static constexpr const char* STATS_PATH = "/reading_stats.bin";
+static constexpr const char* STATS_PATH = "/system/reading_stats.bin";
 static constexpr uint8_t STATS_VERSION = 2;
 
 namespace {

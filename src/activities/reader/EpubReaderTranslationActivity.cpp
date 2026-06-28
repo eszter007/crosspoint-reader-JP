@@ -19,7 +19,7 @@ namespace {
 
 constexpr int HTTP_BUF_SIZE = 2048;
 constexpr uint32_t MIN_HEAP_FOR_TLS = 55000;
-constexpr const char* API_KEY_PATH = "/gemini.key";
+constexpr const char* API_KEY_PATH = "/system/gemini.key";
 constexpr const char* GEMINI_MODEL = "gemini-2.5-flash";
 
 struct ResponseBuffer {

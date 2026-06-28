@@ -82,7 +82,7 @@ The home menu shows an **Insights** entry (between File Transfer and Settings) t
   - Longest streak
 - **Monthly calendar** — navigate months with Left/Right buttons. Days you read are shown as filled black circles. Today is shown with an outline circle. A "X days read" subtitle summarizes each month.
 
-Reading time is recorded automatically when you close a book (minimum 1 minute to count). Books finished are counted once per book (no double-counting on re-open). Stats persist in `/reading_stats.bin` on the SD card root — unaffected by cache clears or firmware updates.
+Reading time is recorded automatically when you close a book (minimum 1 minute to count). Books finished are counted once per book (no double-counting on re-open). Stats persist in `/system/reading_stats.bin` on the SD card root — unaffected by cache clears or firmware updates.
 
 ### Font Selection
 
@@ -170,7 +170,7 @@ Without SD card fonts, the built-in Noto Serif/Sans fonts work fine for both hor
 To use the "Translate Page" feature:
 
 1. Get a free API key from [Google AI Studio](https://aistudio.google.com/apikey)
-2. Create a file `gemini.key` at the SD card root containing just the API key:
+2. Create a file `gemini.key` in the `/system/` folder on the SD card containing just the API key:
    ```
    AIzaSyYOUR_KEY_HERE
    ```
