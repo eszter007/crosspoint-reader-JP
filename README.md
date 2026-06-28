@@ -47,7 +47,7 @@ Select **Translate Page** from the reader menu to translate the current page fro
 
 ### Furigana (Ruby Text)
 
-Reading aids rendered above (horizontal) or beside (vertical) kanji, with positioning adjustments so dense furigana doesn't overlap base characters.
+Reading aids rendered above (horizontal) or beside (vertical) kanji, with positioning adjustments so dense furigana doesn't overlap base characters. Can be toggled on/off per-book from the reader menu.
 
 ### Image Handling
 
@@ -172,7 +172,7 @@ The position counter (e.g. 10/35) appears in the header. Words are pre-scanned s
 
 ### Toggling Vertical Text
 
-For Japanese books, the reader menu shows **Vertical Text: ON/OFF**. Toggle it in-place without leaving the menu. The setting is per-book and persists across reopens.
+For Japanese books, the reader menu shows **Vertical Text: ON/OFF** and **Furigana: ON/OFF**. Toggle either in-place without leaving the menu. Both settings are per-book and persist across reopens.
 
 ---
 

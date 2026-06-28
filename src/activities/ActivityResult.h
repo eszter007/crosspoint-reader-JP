@@ -22,6 +22,7 @@ struct MenuResult {
   uint8_t orientation = 0;
   uint8_t pageTurnOption = 0;
   int8_t verticalOverride = -1;
+  int8_t furiganaOverride = -1;
 };
 
 struct ChapterResult {
