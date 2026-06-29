@@ -49,6 +49,16 @@ Select **Translate Page** from the reader menu to translate the current page fro
 
 Reading aids rendered above (horizontal) or beside (vertical) kanji, with positioning adjustments so dense furigana doesn't overlap base characters. Can be toggled on/off per-book from the reader menu.
 
+### Manga Panel Reader (Mokuro)
+
+Read manga with OCR text overlays and per-panel dictionary lookup. Uses [Mokuro](https://github.com/kha-white/mokuro) for OCR, then a conversion tool packs the panel/text data into a compact binary format the device reads natively.
+
+- **Full-page view** — Displays the manga page BMP scaled to screen with panel highlight rectangles
+- **Panel-by-panel zoom** — Navigate panels in reading order with page turn buttons. Each panel is scaled to fill the screen.
+- **Text overlay** — View OCR'd Japanese text from the current panel, word-wrapped with the reader font
+- **Word lookup** — Press Confirm on a zoomed panel to open dictionary lookup for the panel's text. Same dictionary, deinflection, and grammar features as EPUB word lookup.
+- **Progress saving** — Current page and panel position saved automatically
+
 ### Image Handling
 
 - Dedicated full-page images with aspect-aware rotation
@@ -179,6 +189,16 @@ The position counter (e.g. 10/35) appears in the header. Words are pre-scanned s
 3. **Up/Down** — scroll the translation
 4. **Back** — return to reading
 
+### Reading Manga
+
+1. Prepare your manga using the mokuro conversion tools (see below)
+2. Copy the output folder to the SD card — it contains BMP page images plus `panels.idx` and `panels.dat`
+3. Open the folder from the file browser — the reader detects it as a manga book automatically
+4. **Page turn buttons** — In full-page view, enters panel zoom on the first panel. In panel zoom, cycles through panels then advances to the next page.
+5. **Back** — Returns from panel zoom to full-page view, or from full-page to the file browser
+6. **Confirm** — In panel zoom, opens word lookup for the current panel's text (requires dictionaries)
+7. Long-press **Back** — Jump to the file browser from anywhere
+
 ### Toggling Vertical Text
 
 For Japanese books, the reader menu shows **Vertical Text: ON/OFF** and **Furigana: ON/OFF**. Toggle either in-place without leaving the menu. Both settings are per-book and persist across reopens.
@@ -227,16 +247,64 @@ Output: binary `.idx` (sorted 40-byte records) + `.dat` (UTF-8 definitions) file
 
 ---
 
+## Manga Conversion Tools
+
+The `tools/mokuro_convert/` directory contains scripts to prepare manga for the device.
+
+### Quick Start (pre-processed Mokuro)
+
+If you already have Mokuro JSON output from a manga volume:
+
+```bash
+python3 tools/mokuro_convert/prepare_panels.py \
+  --input /path/to/mokuro_output/ \
+  --output /path/to/sd/MangaTitle/
+```
+
+This converts Mokuro's per-page JSON (panel coordinates + OCR text) and page images into the binary format the device reads: `panels.idx`, `panels.dat`, and BMP page images.
+
+### Full Pipeline (from raw manga images)
+
+If you have raw manga page images and want to run OCR:
+
+```bash
+python3 tools/mokuro_convert/run_mokuro.py \
+  --input /path/to/manga_pages/ \
+  --output /path/to/sd/MangaTitle/
+```
+
+This runs Mokuro OCR (requires `pip install mokuro`), then converts the output. GPU recommended for OCR speed.
+
+### SD Card Layout
+
+```
+/MangaTitle/
+  001.bmp           # Page images (BMP format)
+  002.bmp
+  ...
+  panels.idx        # Panel index (binary, auto-generated)
+  panels.dat        # Panel data with OCR text (binary, auto-generated)
+```
+
+The device detects any folder containing `panels.idx` as a manga book.
+
+---
+
 ## Compatibility with Upstream
 
 This fork tracks upstream CrossPoint and can merge new releases. The Japanese features are additive — they don't modify the base reading experience for non-Japanese books. English and other-language EPUBs work identically to upstream.
 
 Key integration points:
 - `lib/Dict/` — Dictionary lookup, deinflection (new library, no upstream conflicts)
+- `lib/MangaPanel/` — Manga panel binary format parser (new library)
 - `lib/Epub/Epub/VerticalSection.*`, `VerticalParsedText.*` — Vertical text engine (new files)
 - `src/activities/reader/EpubReaderWordLookupActivity.*` — Word lookup UI (new activity)
 - `src/activities/reader/EpubReaderTranslationActivity.*` — Translation UI (new activity)
+- `src/activities/reader/MangaReaderActivity.*` — Manga panel reader (new activity)
+- `src/activities/reader/MangaWordLookupActivity.*` — Manga word lookup (new activity)
 - `src/activities/reader/EpubReaderActivity.cpp` — Auto-detection and menu wiring (minimal changes to existing code)
+- `src/activities/reader/ReaderActivity.cpp` — Manga folder routing (minimal changes)
+- `src/activities/home/FileBrowserActivity.cpp` — Manga folder detection (minimal changes)
 - `lib/I18n/translations/english.yaml` — New UI strings (additive)
 
 ---
