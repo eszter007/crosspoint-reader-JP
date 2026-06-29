@@ -548,6 +548,53 @@ def write_binary(
     print(f"  Text blocks: {total_text}")
 
 
+def crop_panel_images(
+    image_paths: list[str],
+    pages_ocr: list[dict] | None,
+    panels_per_page: list[list[list[int]]] | None,
+    output_dir: str,
+):
+    """Crop individual panels from source images and save as separate JPGs.
+
+    Each panel is saved as p<page>_<panel>.jpg. The manga reader loads
+    these directly for panel zoom view.
+    """
+    from PIL import Image
+
+    os.makedirs(output_dir, exist_ok=True)
+    total = 0
+    for i, img_path in enumerate(image_paths):
+        img = Image.open(img_path)
+
+        if panels_per_page and i < len(panels_per_page):
+            panel_boxes = panels_per_page[i]
+        else:
+            continue
+
+        panel_boxes = sort_panels_manga_order(panel_boxes, img.width)
+
+        if len(panel_boxes) <= 1:
+            img.close()
+            continue
+
+        margin = 10
+        for pi, box in enumerate(panel_boxes):
+            x1 = max(0, box[0] - margin)
+            y1 = max(0, box[1] - margin)
+            x2 = min(img.width, box[2] + margin)
+            y2 = min(img.height, box[3] + margin)
+            cropped = img.crop((x1, y1, x2, y2))
+            panel_path = os.path.join(output_dir, f"p{i}_{pi}.jpg")
+            cropped.save(panel_path, "JPEG", quality=90)
+            total += 1
+
+        img.close()
+        if (i + 1) % 50 == 0:
+            print(f"  {i + 1}/{len(image_paths)} pages cropped")
+
+    print(f"  Cropped {total} panel images")
+
+
 # ── CLI ─────────────────────────────────────────────────────────
 
 
@@ -594,6 +641,9 @@ def main():
 
         print("\nWriting binary output...")
         write_binary(image_paths, pages_ocr, panels_per_page, args.output_dir)
+
+        print("\nCropping panel images...")
+        crop_panel_images(image_paths, pages_ocr, panels_per_page, args.output_dir)
         print("Done.")
     finally:
         shutil.rmtree(work_dir, ignore_errors=True)

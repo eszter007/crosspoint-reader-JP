@@ -113,7 +113,8 @@ bool MangaBook::scanImages() {
       file.getName(name, sizeof(name));
       if (name[0] != '.') {
         std::string_view sv(name);
-        if (FsHelpers::hasBmpExtension(sv)) {
+        if (FsHelpers::hasBmpExtension(sv) || FsHelpers::hasJpgExtension(sv) ||
+            FsHelpers::hasPngExtension(sv)) {
           imageFiles.emplace_back(name);
         }
       }

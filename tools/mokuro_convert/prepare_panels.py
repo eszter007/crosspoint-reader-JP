@@ -90,97 +90,77 @@ def parse_ocr_json(path: str) -> dict:
     }
 
 
-def parse_mokuro_html(path: str) -> list[dict]:
-    """Parse a Mokuro v0.2+ HTML file, extracting per-page data.
+def _parse_css_int(style: str, prop: str) -> int:
+    """Extract an integer CSS property value from a style string."""
+    m = re.search(rf'{prop}\s*:\s*(\d+)', style)
+    return int(m.group(1)) if m else 0
 
-    The HTML contains div.page elements with data attributes or embedded
-    script data. Returns a list of page dicts in page order.
+
+def parse_mokuro_html(path: str) -> list[dict]:
+    """Parse a Mokuro HTML file, extracting per-page data from CSS-positioned divs.
+
+    Mokuro generates HTML with:
+      - div.pageContainer with style="width:W; height:H; background-image:url(...)"
+      - div.textBox children with style="left:X; top:Y; width:W; height:H; writing-mode:..."
+        containing <p> elements with OCR text lines.
     """
     with open(path, "r", encoding="utf-8") as f:
         html = f.read()
 
     pages = []
 
-    # Try to find JSON data in script tags (mokuro v0.2 format)
-    script_match = re.search(
-        r"<script[^>]*>\s*(?:var\s+)?mokpiState\s*=\s*(\{.*?\})\s*;?\s*</script>",
-        html,
-        re.DOTALL,
-    )
-    if script_match:
-        try:
-            state = json.loads(script_match.group(1))
-            for page_data in state.get("pages", []):
-                pages.append(
-                    {
-                        "img_width": page_data.get("img_width", 0),
-                        "img_height": page_data.get("img_height", 0),
-                        "blocks": [
-                            {
-                                "box": b["box"],
-                                "lines": b.get("lines", []),
-                                "vertical": b.get("vertical", True),
-                            }
-                            for b in page_data.get("blocks", [])
-                        ],
-                    }
-                )
-            if pages:
-                return pages
-        except (json.JSONDecodeError, KeyError):
-            pass
-
-    # Fallback: parse page divs with inline JSON data attributes
+    # Match each pageContainer div and its content (up to the next pageContainer or end)
     page_pattern = re.compile(
-        r'<div[^>]*class="[^"]*page[^"]*"[^>]*'
-        r'data-page="(\{[^"]*\})"',
+        r'<div[^>]*class="pageContainer"[^>]*style="([^"]*)"[^>]*>(.*?)(?=<div[^>]*class="pageContainer"|$)',
         re.DOTALL,
     )
-    for match in page_pattern.finditer(html):
-        try:
-            page_data = json.loads(match.group(1).replace("&quot;", '"'))
-            pages.append(
-                {
-                    "img_width": page_data.get("img_width", 0),
-                    "img_height": page_data.get("img_height", 0),
-                    "blocks": [
-                        {
-                            "box": b["box"],
-                            "lines": b.get("lines", []),
-                            "vertical": b.get("vertical", True),
-                        }
-                        for b in page_data.get("blocks", [])
-                    ],
-                }
-            )
-        except (json.JSONDecodeError, KeyError):
+
+    textbox_pattern = re.compile(
+        r'<div[^>]*class="textBox"[^>]*style="([^"]*)"[^>]*>(.*?)</div>',
+        re.DOTALL,
+    )
+
+    p_pattern = re.compile(r'<p>(.*?)</p>', re.DOTALL)
+
+    for page_match in page_pattern.finditer(html):
+        page_style = page_match.group(1)
+        page_content = page_match.group(2)
+
+        img_w = _parse_css_int(page_style, 'width')
+        img_h = _parse_css_int(page_style, 'height')
+
+        if img_w == 0 or img_h == 0:
             continue
 
-    # Fallback: try to find per-page JSON blocks in any script tag
-    if not pages:
-        json_blocks = re.findall(
-            r'\{\s*"img_width"\s*:\s*\d+.*?\}(?=\s*[,\]])', html, re.DOTALL
-        )
-        for block in json_blocks:
-            try:
-                page_data = json.loads(block)
-                if "img_width" in page_data and "blocks" in page_data:
-                    pages.append(
-                        {
-                            "img_width": page_data["img_width"],
-                            "img_height": page_data["img_height"],
-                            "blocks": [
-                                {
-                                    "box": b["box"],
-                                    "lines": b.get("lines", []),
-                                    "vertical": b.get("vertical", True),
-                                }
-                                for b in page_data.get("blocks", [])
-                            ],
-                        }
-                    )
-            except (json.JSONDecodeError, KeyError):
-                continue
+        blocks = []
+        for tb_match in textbox_pattern.finditer(page_content):
+            tb_style = tb_match.group(1)
+            tb_content = tb_match.group(2)
+
+            left = _parse_css_int(tb_style, 'left')
+            top = _parse_css_int(tb_style, 'top')
+            width = _parse_css_int(tb_style, 'width')
+            height = _parse_css_int(tb_style, 'height')
+            vertical = 'vertical' in tb_style
+
+            # Extract text lines from <p> elements
+            lines = [
+                re.sub(r'<[^>]+>', '', p.group(1)).strip()
+                for p in p_pattern.finditer(tb_content)
+            ]
+            lines = [l for l in lines if l]
+
+            blocks.append({
+                "box": [left, top, left + width, top + height],
+                "lines": lines,
+                "vertical": vertical,
+            })
+
+        pages.append({
+            "img_width": img_w,
+            "img_height": img_h,
+            "blocks": blocks,
+        })
 
     return pages
 
@@ -395,8 +375,12 @@ def encode_page(panels: list[dict]) -> bytes:
     return bytes(buf)
 
 
-def write_binary(pages: list[dict], output_dir: str):
-    """Write panels.idx + panels.dat from processed page data."""
+def write_binary(pages: list[dict], output_dir: str, target_height: int = 0):
+    """Write panels.idx + panels.dat from processed page data.
+
+    If target_height > 0, all coordinates and image dimensions are scaled
+    to match resized BMPs (preserving aspect ratio from the original).
+    """
     os.makedirs(output_dir, exist_ok=True)
     idx_path = os.path.join(output_dir, "panels.idx")
     dat_path = os.path.join(output_dir, "panels.dat")
@@ -410,10 +394,32 @@ def write_binary(pages: list[dict], output_dir: str):
     dat_chunks = []
 
     for page in pages:
-        img_w = min(page.get("img_width", 0), 0xFFFF)
-        img_h = min(page.get("img_height", 0), 0xFFFF)
+        orig_w = page.get("img_width", 0)
+        orig_h = page.get("img_height", 0)
 
+        # Compute scale factor if images were resized
+        if target_height > 0 and orig_h > target_height:
+            scale = target_height / orig_h
+        else:
+            scale = 1.0
+
+        img_w = min(int(orig_w * scale), 0xFFFF)
+        img_h = min(int(orig_h * scale), 0xFFFF)
+
+        # Scale text block coordinates
         blocks = page.get("blocks", [])
+        if scale != 1.0:
+            scaled_blocks = []
+            for b in blocks:
+                box = b["box"]
+                scaled_blocks.append({
+                    "box": [int(box[0] * scale), int(box[1] * scale),
+                            int(box[2] * scale), int(box[3] * scale)],
+                    "lines": b.get("lines", []),
+                    "vertical": b.get("vertical", True),
+                })
+            blocks = scaled_blocks
+
         panels = cluster_into_panels(blocks, img_w, img_h)
         panels = sort_panels_manga_order(panels)
 
@@ -452,6 +458,125 @@ def write_binary(pages: list[dict], output_dir: str):
 # ── CLI ─────────────────────────────────────────────────────────
 
 
+IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".tiff", ".tif"}
+
+
+def convert_images_to_bmp(images_dir: str, output_dir: str):
+    """Convert manga page images (JPG/PNG) to 1-bit BMP for the device.
+
+    The CrossPoint manga reader expects BMP files. This converts source images
+    to 1-bit (monochrome) BMPs with Floyd-Steinberg dithering, sorted by
+    filename to match the panel index page order.
+    """
+    try:
+        from PIL import Image
+    except ImportError:
+        print("Error: Pillow not installed. Run: pip install Pillow", file=sys.stderr)
+        sys.exit(1)
+
+    os.makedirs(output_dir, exist_ok=True)
+
+    files = sorted(
+        f for f in os.listdir(images_dir)
+        if os.path.splitext(f)[1].lower() in IMAGE_EXTS
+    )
+
+    if not files:
+        print(f"Warning: no images found in {images_dir}")
+        return
+
+    print(f"Converting {len(files)} images to 1-bit BMP...")
+    for i, fname in enumerate(files):
+        src = os.path.join(images_dir, fname)
+        base = os.path.splitext(fname)[0]
+        dst = os.path.join(output_dir, base + ".bmp")
+
+        if os.path.exists(dst):
+            continue
+
+        img = Image.open(src).convert("L")  # grayscale
+        # Scale to device screen size (high-quality Lanczos in grayscale)
+        TARGET_H = 800
+        if img.height > TARGET_H:
+            ratio = TARGET_H / img.height
+            target_w = int(img.width * ratio)
+            img = img.resize((target_w, TARGET_H), Image.LANCZOS)
+        from PIL import ImageEnhance
+        img = ImageEnhance.Contrast(img).enhance(1.2)
+        bw.save(dst)
+
+        if (i + 1) % 50 == 0 or i + 1 == len(files):
+            print(f"  {i + 1}/{len(files)} converted")
+
+    print(f"  Images saved to {output_dir}")
+
+
+def crop_panels(pages: list[dict], images_dir: str, output_dir: str):
+    """Crop individual panels from source images and save as separate files.
+
+    Each panel is saved as p<page>_<panel>.jpg in the output directory.
+    The manga reader loads these directly for panel zoom, avoiding
+    complex cropping at render time.
+    """
+    try:
+        from PIL import Image
+    except ImportError:
+        print("Error: Pillow not installed. Run: pip install Pillow", file=sys.stderr)
+        sys.exit(1)
+
+    os.makedirs(output_dir, exist_ok=True)
+
+    # Get sorted image files from the source directory
+    image_files = sorted(
+        f for f in os.listdir(images_dir)
+        if os.path.splitext(f)[1].lower() in IMAGE_EXTS
+    )
+
+    if len(image_files) != len(pages):
+        print(f"Warning: {len(image_files)} images but {len(pages)} pages in panel data")
+
+    total_panels = 0
+    for page_idx, page in enumerate(pages):
+        if page_idx >= len(image_files):
+            break
+
+        src_path = os.path.join(images_dir, image_files[page_idx])
+        img_w = page.get("img_width", 0)
+        img_h = page.get("img_height", 0)
+        if img_w == 0 or img_h == 0:
+            continue
+
+        blocks = page.get("blocks", [])
+        panels = cluster_into_panels(blocks, img_w, img_h)
+        panels = sort_panels_manga_order(panels)
+
+        if len(panels) <= 1:
+            continue
+
+        img = Image.open(src_path)
+
+        for panel_idx, panel in enumerate(panels):
+            x1, y1, x2, y2 = panel["box"]
+            # Add small margin around the panel
+            margin = 10
+            x1 = max(0, x1 - margin)
+            y1 = max(0, y1 - margin)
+            x2 = min(img.width, x2 + margin)
+            y2 = min(img.height, y2 + margin)
+
+            cropped = img.crop((x1, y1, x2, y2))
+            panel_path = os.path.join(output_dir, f"p{page_idx}_{panel_idx}.jpg")
+            cropped.save(panel_path, "JPEG", quality=90)
+            total_panels += 1
+
+        img.close()
+
+        if (page_idx + 1) % 50 == 0:
+            print(f"  {page_idx + 1}/{len(pages)} pages cropped")
+
+    print(f"Cropped {total_panels} panel images")
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Convert Mokuro OCR output to binary panel data for CrossPoint Reader."
@@ -473,6 +598,13 @@ def main():
         help="Fraction of page size used as margin when clustering text blocks into panels (default: 0.05)",
     )
 
+    parser.add_argument(
+        "--images",
+        help="Directory containing source manga images (JPG/PNG). "
+             "Images are converted to 1-bit BMP and copied to --output-dir "
+             "so the device can render them.",
+    )
+
     args = parser.parse_args()
 
     print(f"Loading Mokuro data from: {args.input}")
@@ -484,6 +616,10 @@ def main():
         sys.exit(1)
 
     write_binary(pages, args.output_dir)
+
+    if args.images:
+        crop_panels(pages, args.images, args.output_dir)
+
     print("Done.")
 
 

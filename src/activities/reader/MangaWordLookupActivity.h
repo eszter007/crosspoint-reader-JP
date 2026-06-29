@@ -8,6 +8,8 @@
 #include "activities/Activity.h"
 #include "util/ButtonNavigator.h"
 
+struct Rect;
+
 class MangaWordLookupActivity final : public Activity {
  public:
   explicit MangaWordLookupActivity(GfxRenderer& renderer, MappedInputManager& mappedInput,

@@ -1072,12 +1072,12 @@ void GfxRenderer::drawBitmap1Bit(const Bitmap& bitmap, const int x, const int y,
       // Get 2-bit value (result of readNextRow quantization)
       const uint8_t val = outputRow[bmpX / 4] >> (6 - ((bmpX * 2) % 8)) & 0x3;
 
-      // For 1-bit source: 0 or 1 -> map to black (0,1,2) or white (3)
-      // val < 3 means black pixel (draw it)
+      // Darkest-wins: if ANY source pixel at this screen position is black,
+      // draw it. This preserves thin manga lines during downscale instead of
+      // letting white pixels overwrite them via nearest-neighbor.
       if (val < 3) {
         drawPixel(screenX, screenY, true);
       }
-      // White pixels (val == 3) are not drawn (leave background)
     }
   }
 

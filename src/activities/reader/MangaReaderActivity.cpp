@@ -2,6 +2,8 @@
 
 #include <Bitmap.h>
 #include <DictIndex.h>
+#include <Epub/converters/ImageDecoderFactory.h>
+#include <Epub/converters/ImageToFramebufferDecoder.h>
 #include <FsHelpers.h>
 #include <GfxRenderer.h>
 #include <HalStorage.h>
@@ -216,50 +218,62 @@ void MangaReaderActivity::renderFullPage() {
     return;
   }
 
-  HalFile file;
-  if (!Storage.openFileForRead("MNG", imgPath, file)) {
-    renderer.drawCenteredText(UI_12_FONT_ID, renderer.getScreenHeight() / 2,
-                              tr(STR_PAGE_LOAD_ERROR), true);
-    renderer.displayBuffer();
-    return;
-  }
-
-  Bitmap bitmap(file, true);
-  if (bitmap.parseHeaders() != BmpReaderError::Ok) {
-    renderer.drawCenteredText(UI_12_FONT_ID, renderer.getScreenHeight() / 2,
-                              tr(STR_PAGE_LOAD_ERROR), true);
-    renderer.displayBuffer();
-    return;
-  }
-
   const int screenW = renderer.getScreenWidth();
   const int screenH = renderer.getScreenHeight();
 
+  // Use the image decoder (supports JPG/PNG/BMP) for proper grayscale rendering.
+  ImageToFramebufferDecoder* decoder = ImageDecoderFactory::getDecoder(imgPath);
+  if (!decoder) {
+    renderer.drawCenteredText(UI_12_FONT_ID, screenH / 2, tr(STR_PAGE_LOAD_ERROR), true);
+    renderer.displayBuffer();
+    return;
+  }
+
+  ImageDimensions dims = {0, 0};
+  if (!decoder->getDimensions(imgPath, dims) || dims.width <= 0 || dims.height <= 0) {
+    renderer.drawCenteredText(UI_12_FONT_ID, screenH / 2, tr(STR_PAGE_LOAD_ERROR), true);
+    renderer.displayBuffer();
+    return;
+  }
+
   int x = 0, y = 0;
-  if (bitmap.getWidth() > screenW || bitmap.getHeight() > screenH) {
-    float ratio = static_cast<float>(bitmap.getWidth()) / static_cast<float>(bitmap.getHeight());
-    float screenRatio = static_cast<float>(screenW) / static_cast<float>(screenH);
+  float ratio = static_cast<float>(dims.width) / static_cast<float>(dims.height);
+  float screenRatio = static_cast<float>(screenW) / static_cast<float>(screenH);
+  if (dims.width > screenW || dims.height > screenH) {
     if (ratio > screenRatio) {
       y = static_cast<int>((screenH - screenW / ratio) / 2.0f);
     } else {
       x = static_cast<int>((screenW - screenH * ratio) / 2.0f);
     }
   } else {
-    x = (screenW - bitmap.getWidth()) / 2;
-    y = (screenH - bitmap.getHeight()) / 2;
+    x = (screenW - dims.width) / 2;
+    y = (screenH - dims.height) / 2;
   }
 
-  renderer.drawBitmap(bitmap, x, y, screenW, screenH, 0, 0);
+  // Cache path for decoded pixel data (avoids re-decoding JPG on grayscale passes)
+  std::string cachePath = book->getCachePath() + "/page_" + std::to_string(currentPage) + ".2bp";
+
+  RenderConfig config;
+  config.x = x;
+  config.y = y;
+  config.maxWidth = screenW;
+  config.maxHeight = screenH;
+  config.useGrayscale = true;
+  config.useDithering = true;
+  config.cachePath = cachePath;
+
+  // BW pass — render to framebuffer but don't display yet
+  decoder->decodeToFramebuffer(imgPath, renderer, config);
 
   // Draw panel highlights if panels are loaded
   if (panelsLoaded && !panels.empty()) {
-    float scaleX = static_cast<float>(screenW) / static_cast<float>(bitmap.getWidth());
-    float scaleY = static_cast<float>(screenH) / static_cast<float>(bitmap.getHeight());
+    float scaleX = static_cast<float>(screenW) / static_cast<float>(dims.width);
+    float scaleY = static_cast<float>(screenH) / static_cast<float>(dims.height);
     float scale = std::min(scaleX, scaleY);
     if (scale > 1.0f) scale = 1.0f;
 
-    int imgDrawW = static_cast<int>(bitmap.getWidth() * scale);
-    int imgDrawH = static_cast<int>(bitmap.getHeight() * scale);
+    int imgDrawW = static_cast<int>(dims.width * scale);
+    int imgDrawH = static_cast<int>(dims.height * scale);
     int imgX = (screenW - imgDrawW) / 2;
     int imgY = (screenH - imgDrawH) / 2;
 
@@ -283,7 +297,23 @@ void MangaReaderActivity::renderFullPage() {
                     renderer.getLineHeight(SMALL_FONT_ID) + 2, false);
   renderer.drawText(SMALL_FONT_ID, statusX, statusY, statusBuf, true);
 
-  ReaderUtils::displayWithRefreshCycle(renderer, pagesUntilFullRefresh);
+  // Display with grayscale: BW first, then LSB/MSB planes for 4-level gray.
+  renderer.storeBwBuffer();
+  renderer.displayBuffer(HalDisplay::FAST_REFRESH);
+
+  renderer.clearScreen(0x00);
+  renderer.setRenderMode(GfxRenderer::GRAYSCALE_LSB);
+  decoder->decodeToFramebuffer(imgPath, renderer, config);
+  renderer.copyGrayscaleLsbBuffers();
+
+  renderer.clearScreen(0x00);
+  renderer.setRenderMode(GfxRenderer::GRAYSCALE_MSB);
+  decoder->decodeToFramebuffer(imgPath, renderer, config);
+  renderer.copyGrayscaleMsbBuffers();
+
+  renderer.displayGrayBuffer();
+  renderer.setRenderMode(GfxRenderer::BW);
+  renderer.restoreBwBuffer();
 }
 
 void MangaReaderActivity::renderPanelZoom() {
@@ -304,82 +334,52 @@ void MangaReaderActivity::renderPanelZoom() {
     return;
   }
 
-  HalFile file;
-  if (!Storage.openFileForRead("MNG", imgPath, file)) {
-    renderer.drawCenteredText(UI_12_FONT_ID, renderer.getScreenHeight() / 2,
-                              tr(STR_PAGE_LOAD_ERROR), true);
-    renderer.displayBuffer();
-    return;
-  }
-
-  Bitmap bitmap(file, true);
-  if (bitmap.parseHeaders() != BmpReaderError::Ok) {
-    renderer.drawCenteredText(UI_12_FONT_ID, renderer.getScreenHeight() / 2,
-                              tr(STR_PAGE_LOAD_ERROR), true);
-    renderer.displayBuffer();
-    return;
-  }
-
   const int screenW = renderer.getScreenWidth();
   const int screenH = renderer.getScreenHeight();
 
-  // Compute scale to fit panel into screen with some margin
-  static constexpr int MARGIN = 4;
-  int availW = screenW - MARGIN * 2;
-  int availH = screenH - MARGIN * 2;
+  // Try to load a pre-cropped panel image (p<page>_<panel>.jpg)
+  char panelFileName[64];
+  snprintf(panelFileName, sizeof(panelFileName), "p%d_%d.jpg", currentPage, currentPanel);
+  std::string panelImgPath = book->getFolder();
+  if (panelImgPath.back() != '/') panelImgPath += '/';
+  panelImgPath += panelFileName;
 
-  float scaleX = static_cast<float>(availW) / static_cast<float>(panel.w);
-  float scaleY = static_cast<float>(availH) / static_cast<float>(panel.h);
-  float scale = std::min(scaleX, scaleY);
-
-  int drawW = static_cast<int>(panel.w * scale);
-  int drawH = static_cast<int>(panel.h * scale);
-  int drawX = (screenW - drawW) / 2;
-  int drawY = (screenH - drawH) / 2;
-
-  // Stream through BMP rows, only drawing pixels within the panel region
-  int outputRowSize = (bitmap.getWidth() + 3) / 4;
-  auto outputRow = makeUniqueNoThrow<uint8_t[]>(outputRowSize);
-  auto rowBytes = makeUniqueNoThrow<uint8_t[]>(bitmap.getRowBytes());
-  if (!outputRow || !rowBytes) {
-    LOG_ERR("MNG", "OOM: row buffers for panel zoom");
-    renderer.drawCenteredText(UI_12_FONT_ID, screenH / 2, tr(STR_MEMORY_ERROR), true);
-    renderer.displayBuffer();
+  ImageToFramebufferDecoder* decoder = ImageDecoderFactory::getDecoder(panelImgPath);
+  if (!decoder || !Storage.exists(panelImgPath.c_str())) {
+    // No pre-cropped panel image — fall back to full page view
+    renderFullPage();
     return;
   }
 
-  int panelX1 = panel.x;
-  int panelY1 = panel.y;
-  int panelX2 = panel.x + panel.w;
-  int panelY2 = panel.y + panel.h;
-
-  for (int bmpY = 0; bmpY < bitmap.getHeight(); bmpY++) {
-    int srcY = bitmap.isTopDown() ? bmpY : bitmap.getHeight() - 1 - bmpY;
-
-    if (bitmap.readNextRow(outputRow.get(), rowBytes.get()) != BmpReaderError::Ok) {
-      break;
-    }
-
-    if (srcY < panelY1 || srcY >= panelY2) continue;
-
-    int destY = drawY + static_cast<int>((srcY - panelY1) * scale);
-    if (destY < 0 || destY >= screenH) continue;
-
-    for (int bmpX = panelX1; bmpX < panelX2; bmpX++) {
-      if (bmpX < 0 || bmpX >= bitmap.getWidth()) continue;
-
-      uint8_t val = outputRow[bmpX / 4] >> (6 - ((bmpX * 2) % 8)) & 0x3;
-      if (val < 3) {
-        int destX = drawX + static_cast<int>((bmpX - panelX1) * scale);
-        if (destX >= 0 && destX < screenW) {
-          renderer.drawPixel(destX, destY);
-        }
-      }
-    }
+  ImageDimensions panelDims = {0, 0};
+  if (!decoder->getDimensions(panelImgPath, panelDims) || panelDims.width <= 0 || panelDims.height <= 0) {
+    renderFullPage();
+    return;
   }
 
-  // Draw thin border around the panel view
-  renderer.drawRect(drawX - 1, drawY - 1, drawW + 2, drawH + 2, 1, true);
+  // Fit panel image to screen preserving aspect ratio
+  int x = 0, y = 0;
+  float ratio = static_cast<float>(panelDims.width) / static_cast<float>(panelDims.height);
+  float screenRatio = static_cast<float>(screenW) / static_cast<float>(screenH);
+  if (ratio > screenRatio) {
+    y = static_cast<int>((screenH - screenW / ratio) / 2.0f);
+  } else {
+    x = static_cast<int>((screenW - screenH * ratio) / 2.0f);
+  }
+
+  std::string cachePath = book->getCachePath() + "/p" + std::to_string(currentPage)
+                          + "_" + std::to_string(currentPanel) + ".2bp";
+  RenderConfig config;
+  config.x = x;
+  config.y = y;
+  config.maxWidth = screenW;
+  config.maxHeight = screenH;
+  config.useGrayscale = true;
+  config.useDithering = true;
+  config.cachePath = cachePath;
+
+  // BW pass
+  decoder->decodeToFramebuffer(panelImgPath, renderer, config);
 
   // Panel indicator and status
   char statusBuf[48];
@@ -393,7 +393,6 @@ void MangaReaderActivity::renderPanelZoom() {
                     renderer.getLineHeight(SMALL_FONT_ID) + 2, false);
   renderer.drawText(SMALL_FONT_ID, statusX, statusY, statusBuf, true);
 
-  // Hint: if panel has text, show lookup hint
   if (!panels[currentPanel].textBlocks.empty()) {
     const char* hint = DictIndex::isAvailable() ? tr(STR_WORD_LOOKUP) : "Text";
     renderer.fillRect(2, statusY - 1, renderer.getTextWidth(SMALL_FONT_ID, hint) + 4,
@@ -401,7 +400,23 @@ void MangaReaderActivity::renderPanelZoom() {
     renderer.drawText(SMALL_FONT_ID, 4, statusY, hint, true);
   }
 
-  ReaderUtils::displayWithRefreshCycle(renderer, pagesUntilFullRefresh);
+  // Display with grayscale
+  renderer.storeBwBuffer();
+  renderer.displayBuffer(HalDisplay::FAST_REFRESH);
+
+  renderer.clearScreen(0x00);
+  renderer.setRenderMode(GfxRenderer::GRAYSCALE_LSB);
+  decoder->decodeToFramebuffer(panelImgPath, renderer, config);
+  renderer.copyGrayscaleLsbBuffers();
+
+  renderer.clearScreen(0x00);
+  renderer.setRenderMode(GfxRenderer::GRAYSCALE_MSB);
+  decoder->decodeToFramebuffer(panelImgPath, renderer, config);
+  renderer.copyGrayscaleMsbBuffers();
+
+  renderer.displayGrayBuffer();
+  renderer.setRenderMode(GfxRenderer::BW);
+  renderer.restoreBwBuffer();
 }
 
 void MangaReaderActivity::renderTextOverlay() {
