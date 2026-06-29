@@ -34,7 +34,10 @@
 #include "EpubReaderUtils.h"
 #include "KOReaderCredentialStore.h"
 #include "KOReaderSyncActivity.h"
+#include <ctime>
+
 #include "MappedInputManager.h"
+#include "ReadingStatsStore.h"
 #include "ProgressMapper.h"
 #include "QrDisplayActivity.h"
 #include "ReaderUtils.h"
@@ -126,6 +129,11 @@ void moveFinishedBookToReadFolder(const std::string& srcPath, const std::string&
 void EpubReaderActivity::onEnter() {
   Activity::onEnter();
 
+  // Swallow the Confirm release that opened this book from the library,
+  // so it doesn't immediately trigger the reader menu.
+  ignoreNextConfirmRelease = true;
+  readingSessionStartMs = millis();
+
   if (!epub) {
     return;
   }
@@ -176,8 +184,31 @@ void EpubReaderActivity::onEnter() {
 void EpubReaderActivity::onExit() {
   Activity::onExit();
 
+  // Record reading time for stats
+  if (readingSessionStartMs > 0) {
+    unsigned long elapsed = millis() - readingSessionStartMs;
+    uint16_t minutes = static_cast<uint16_t>(elapsed / 60000);
+    if (minutes > 0) {
+      time_t now = time(nullptr);
+      struct tm* t = localtime(&now);
+      READING_STATS.loadFromFile();
+      READING_STATS.addMinutes(static_cast<uint16_t>(t->tm_year + 1900),
+                               static_cast<uint8_t>(t->tm_mon + 1),
+                               static_cast<uint8_t>(t->tm_mday), minutes);
+      READING_STATS.saveToFile();
+    }
+  }
+
   // Reset orientation back to portrait for the rest of the UI
   renderer.setOrientation(GfxRenderer::Orientation::Portrait);
+
+  // Record book completion if exiting at end-of-book (only once per book).
+  const bool atEnd = currentSpineIndex > 0 && epub && currentSpineIndex >= epub->getSpineItemsCount();
+  if (atEnd) {
+    READING_STATS.loadFromFile();
+    READING_STATS.markBookFinished(epub->getPath());
+    READING_STATS.saveToFile();
+  }
 
   APP_STATE.readerActivityLoadCount = 0;
   APP_STATE.saveToFile();
@@ -864,6 +895,8 @@ void EpubReaderActivity::render(RenderLock&& lock) {
 
   // Show end of book screen
   if (currentSpineIndex == epub->getSpineItemsCount()) {
+    // Save progress at spine=spineCount so the library shows 100%.
+    saveProgress(currentSpineIndex, 0, 1, verticalOverride, furiganaOverride);
     renderer.clearScreen();
     renderer.drawCenteredText(UI_12_FONT_ID, 300, tr(STR_END_OF_BOOK), true, EpdFontFamily::BOLD);
     renderer.displayBuffer();

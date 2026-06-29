@@ -34,7 +34,7 @@ constexpr const char* BLOCK_TAGS[] = {"p", "li", "div", "br", "blockquote"};
 constexpr const char* BOLD_TAGS[] = {"b", "strong"};
 constexpr const char* ITALIC_TAGS[] = {"i", "em"};
 constexpr const char* UNDERLINE_TAGS[] = {"u", "ins"};
-constexpr const char* IMAGE_TAGS[] = {"img"};
+constexpr const char* IMAGE_TAGS[] = {"img", "image"};
 constexpr const char* SKIP_TAGS[] = {"head", "style", "script", "rp"};
 
 bool isWhitespace(const char c) { return c == ' ' || c == '\r' || c == '\n' || c == '\t'; }
@@ -440,6 +440,8 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
       for (int i = 0; atts[i]; i += 2) {
         if (strcmp(atts[i], "src") == 0) {
           src = atts[i + 1];
+        } else if (strcmp(atts[i], "xlink:href") == 0 || strcmp(atts[i], "href") == 0) {
+          if (src.empty()) src = atts[i + 1];
         } else if (strcmp(atts[i], "alt") == 0) {
           alt = atts[i + 1];
         }

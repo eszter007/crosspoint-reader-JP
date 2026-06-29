@@ -32,6 +32,9 @@ class RecentBooksActivity final : public Activity {
     std::string folderPath;
     std::string folderName;
     std::string coverBmpPath;
+    // Resolved path to a small (shelf-height) thumbnail that renders 1:1.
+    std::string shelfThumbPath;
+    std::string coverBookPath;  // EPUB path used to generate the shelf thumb
     int bookCount = 0;
   };
   std::vector<ShelfInfo> shelves;
@@ -50,7 +53,7 @@ class RecentBooksActivity final : public Activity {
 
   static constexpr int TAB_COUNT = 2;
   static constexpr int GRID_COLS = 3;
-  static constexpr int COVER_PADDING = 6;
+  static constexpr int COVER_PADDING = 4;
   static constexpr int CELL_TEXT_GAP = 4;
   static constexpr int SELECTION_RADIUS = 6;
 

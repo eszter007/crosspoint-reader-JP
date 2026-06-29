@@ -64,15 +64,39 @@ Read manga with OCR text overlays and per-panel dictionary lookup. Uses [Mokuro]
 - Dedicated full-page images with aspect-aware rotation
 - No blank pages between consecutive images
 - Status bar respected for rotated images
+- SVG `<image>` elements (Calibre-generated cover pages) now render correctly
+
+### Home Screen
+
+- Reading progress percentage shown below the author on the "Continue Reading" card
+- Progress uses spine-aware calculation (matches the Library view)
 
 ### Library
 
 The home menu's **Library** has two tabs:
 
-- **Books** — Recent books as a 3-column cover grid. Each book displays its cover image with reading progress percentage below. Books without a cover show a placeholder icon with the title. Long-press a book to remove it from the list.
-- **Shelves** — Folders on the SD card that contain books, shown as a list with a cover thumbnail, folder name, book count, and a chevron. Tap a shelf to see all books in that folder as a cover grid with progress — not just recent books, but every book file in the folder.
+- **Books** — All books on the SD card as a 3-column cover grid, sorted by recency (recently opened first, then alphabetical). Covers and titles are auto-generated from EPUB metadata on first visit. A peek row hints at more content below the button bar.
+- **Shelves** — Folders on the SD card that contain books, shown as a list with a cover thumbnail, folder name, book count, and a chevron. Tap a shelf to see all books in that folder as a cover grid with progress.
 
 Tab switching uses the same pattern as Settings: Confirm cycles tabs when the tab row is focused, hold Up/Down to switch tabs from anywhere.
+
+### Insights
+
+The home menu shows an **Insights** entry (between File Transfer and Settings) that tracks your reading activity:
+
+- **Streak widget** — flame icon with current streak count, weekly minutes, and a Mon–Sun day grid with checkmark circles for days you read
+- **Stat cards** (2x2 grid):
+  - Books finished
+  - Days read
+  - Total reading time
+  - Longest streak
+- **Monthly calendar** — navigate months with Left/Right buttons. Days you read are shown as filled black circles. Today is shown with an outline circle. A "X days read" subtitle summarizes each month.
+
+Reading time is recorded automatically when you close a book (minimum 1 minute to count). Books finished are counted once per book (no double-counting on re-open). Stats persist in `/system/reading_stats.bin` on the SD card root — unaffected by cache clears or firmware updates.
+
+### Font Selection
+
+The reader uses whatever font is selected in Settings (built-in Noto Serif/Sans or SD card fonts like UDDigiKyokasho). No font is auto-overridden — the user's choice is always respected.
 
 ---
 
@@ -156,7 +180,7 @@ Without SD card fonts, the built-in Noto Serif/Sans fonts work fine for both hor
 To use the "Translate Page" feature:
 
 1. Get a free API key from [Google AI Studio](https://aistudio.google.com/apikey)
-2. Create a file `gemini.key` at the SD card root containing just the API key:
+2. Create a file `gemini.key` in the `/system/` folder on the SD card containing just the API key:
    ```
    AIzaSyYOUR_KEY_HERE
    ```
@@ -314,3 +338,5 @@ Key integration points:
 Built on top of [CrossPoint](https://github.com/crosspoint-reader/crosspoint-reader) — open-source e-reader firmware, community-built, fully hackable, free forever.
 
 Dictionary data from [JMdict](https://www.edrdg.org/jmdict/j_jmdict.html) and [Jitendex](https://github.com/stephenmk/Jitendex), used under their respective licenses.
+
+Icons by [Tabler Icons](https://tabler.io/icons) (MIT license).

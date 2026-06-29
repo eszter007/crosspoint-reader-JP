@@ -44,6 +44,7 @@ class EpubReaderActivity final : public Activity {
   // Per-book furigana override: -1 = auto (on by default), 0 = off, 1 = on
   int8_t furiganaOverride = -1;
   unsigned long bookmarkMessageTime = 0UL;
+  unsigned long readingSessionStartMs = 0UL;
   // Set when the reader is left at end-of-book and SETTINGS.moveFinishedToReadFolder is on.
   // Consumed in onExit() to relocate the finished book into /Read/.
   bool pendingReadFolderMove = false;
