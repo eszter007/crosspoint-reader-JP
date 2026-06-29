@@ -4,6 +4,7 @@
 #include <GfxRenderer.h>
 #include <HalStorage.h>
 #include <I18n.h>
+#include <MangaPanel.h>
 #include <Memory.h>
 
 #include <algorithm>
@@ -264,10 +265,15 @@ void FileBrowserActivity::loop() {
       if (basepath.back() != '/') basepath += "/";
 
       if (isDirectory) {
-        basepath += entry.substr(0, entry.length() - 1);
-        loadFiles();
-        selectorIndex = 0;
-        requestUpdate();
+        std::string dirPath = basepath + entry.substr(0, entry.length() - 1);
+        if (manga::MangaBook::isMangaFolder(dirPath)) {
+          onSelectBook(dirPath);
+        } else {
+          basepath = dirPath;
+          loadFiles();
+          selectorIndex = 0;
+          requestUpdate();
+        }
       } else {
         onSelectBook(basepath + entry);
       }

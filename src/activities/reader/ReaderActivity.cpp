@@ -2,11 +2,13 @@
 
 #include <FsHelpers.h>
 #include <HalStorage.h>
+#include <MangaPanel.h>
 #include <Memory.h>
 
 #include "CrossPointSettings.h"
 #include "Epub.h"
 #include "EpubReaderActivity.h"
+#include "MangaReaderActivity.h"
 #include "SdCardFontSystem.h"
 #include "Txt.h"
 #include "TxtReaderActivity.h"
@@ -23,6 +25,26 @@ bool ReaderActivity::isTxtFile(const std::string& path) {
 }
 
 bool ReaderActivity::isBmpFile(const std::string& path) { return FsHelpers::hasBmpExtension(path); }
+
+bool ReaderActivity::isMangaFolder(const std::string& path) { return manga::MangaBook::isMangaFolder(path); }
+
+std::unique_ptr<manga::MangaBook> ReaderActivity::loadManga(const std::string& path) {
+  auto book = makeUniqueNoThrow<manga::MangaBook>(path);
+  if (!book) {
+    LOG_ERR("READER", "Failed to allocate MangaBook");
+    return nullptr;
+  }
+  if (!book->load()) {
+    LOG_ERR("READER", "Failed to load manga: %s", path.c_str());
+    return nullptr;
+  }
+  return book;
+}
+
+void ReaderActivity::onGoToMangaReader(std::unique_ptr<manga::MangaBook> manga) {
+  currentBookPath = manga->getFolder();
+  activityManager.replaceActivity(std::make_unique<MangaReaderActivity>(renderer, mappedInput, std::move(manga)));
+}
 
 std::unique_ptr<Epub> ReaderActivity::loadEpub(const std::string& path) {
   if (!Storage.exists(path.c_str())) {
@@ -120,7 +142,14 @@ void ReaderActivity::onEnter() {
   sdFontSystem.ensureLoaded(renderer);
 
   currentBookPath = initialBookPath;
-  if (isBmpFile(initialBookPath)) {
+  if (isMangaFolder(initialBookPath)) {
+    auto manga = loadManga(initialBookPath);
+    if (!manga) {
+      onGoBack();
+      return;
+    }
+    onGoToMangaReader(std::move(manga));
+  } else if (isBmpFile(initialBookPath)) {
     onGoToBmpViewer(initialBookPath);
   } else if (isXtcFile(initialBookPath)) {
     auto xtc = loadXtc(initialBookPath);
