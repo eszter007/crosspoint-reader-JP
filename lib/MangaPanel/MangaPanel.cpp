@@ -72,6 +72,7 @@ bool MangaBook::isMangaFolder(const std::string& folderPath) {
 }
 
 std::string MangaBook::getTitle() const {
+  if (!metaTitle.empty()) return metaTitle;
   auto pos = folderPath.find_last_of('/');
   if (pos != std::string::npos && pos + 1 < folderPath.size()) {
     return folderPath.substr(pos + 1);
@@ -90,6 +91,7 @@ bool MangaBook::load() {
   if (!loadIndex()) return false;
   scanImages();
   loadToc();
+  loadMeta();
   return true;
 }
 
@@ -342,6 +344,42 @@ void MangaBook::loadToc() {
   }
 
   LOG_DBG("MNG", "Loaded toc.idx: %u chapter(s)", static_cast<unsigned>(tocEntries.size()));
+}
+
+void MangaBook::loadMeta() {
+  metaTitle.clear();
+  author.clear();
+
+  std::string metaPath = folderPath;
+  if (metaPath.back() != '/') metaPath += '/';
+  metaPath += "meta.bin";
+
+  if (!Storage.exists(metaPath.c_str())) return;
+
+  HalFile f;
+  if (!Storage.openFileForRead("MNG", metaPath, f)) return;
+
+  uint8_t hdr[8];
+  if (f.read(hdr, 8) != 8) return;
+
+  // uint32 version, uint16 titleLen, uint16 authorLen
+  const uint32_t version = readU32(hdr);
+  if (version != 1) return;
+  const uint16_t titleLen = readU16(hdr + 4);
+  const uint16_t authorLen = readU16(hdr + 6);
+
+  if (titleLen > 0) {
+    auto buf = makeUniqueNoThrow<char[]>(titleLen);
+    if (!buf || f.read(reinterpret_cast<uint8_t*>(buf.get()), titleLen) != titleLen) return;
+    metaTitle.assign(buf.get(), titleLen);
+  }
+  if (authorLen > 0) {
+    auto buf = makeUniqueNoThrow<char[]>(authorLen);
+    if (!buf || f.read(reinterpret_cast<uint8_t*>(buf.get()), authorLen) != authorLen) return;
+    author.assign(buf.get(), authorLen);
+  }
+
+  LOG_DBG("MNG", "Loaded meta.bin: title=%s author=%s", metaTitle.c_str(), author.c_str());
 }
 
 }  // namespace manga

@@ -38,7 +38,17 @@ Output (in --output-dir):
     page_0000.jpg, page_0001.jpg, ...   canonical, trivially-sortable page
                                          images (device scans these directly)
     p<page>_<panel>.jpg                 cropped panel images for panel-zoom
-    panels.idx / panels.dat             same binary format as before:
+    panels.idx / panels.dat             panel layout data
+    meta.bin                            book title + author (auto-extracted
+                                         from source, or set via --title/--author)
+
+Binary format (meta.bin):
+    Header (8 bytes):
+        uint32  version         (currently 1)
+        uint16  titleLen        UTF-8 byte length of title
+        uint16  authorLen       UTF-8 byte length of author
+    char[]  title               UTF-8 title (titleLen bytes)
+    char[]  author              UTF-8 author (authorLen bytes)
 
 Binary format (panels.idx):
     Header:
@@ -827,6 +837,73 @@ def write_toc(output_dir: str, entries: list[tuple], add_cover: bool = True):
     print(f"  {toc_path}: {len(entries)} chapter(s)")
 
 
+META_FORMAT_VERSION = 1
+META_HEADER = "<IHH"  # version(4) + titleLen(2) + authorLen(2) = 8 bytes
+
+
+def write_meta(output_dir: str, title: str, author: str) -> None:
+    """Write meta.bin: book title and author for the CrossPoint library."""
+    if not title and not author:
+        return
+    title_bytes = title.encode("utf-8")[:0xFFFF]
+    author_bytes = author.encode("utf-8")[:0xFFFF]
+    meta_path = os.path.join(output_dir, "meta.bin")
+    with open(meta_path, "wb") as f:
+        f.write(struct.pack(META_HEADER, META_FORMAT_VERSION, len(title_bytes), len(author_bytes)))
+        f.write(title_bytes)
+        f.write(author_bytes)
+    print(f"  {meta_path}: title={title!r}, author={author!r}")
+
+
+def extract_metadata(input_path: str, work_dir: str) -> tuple[str, str]:
+    """Best-effort extraction of (title, author) from EPUB OPF, CBZ ComicInfo.xml, or PDF metadata."""
+    p = Path(input_path)
+    title, author = "", ""
+
+    if p.suffix.lower() == ".epub":
+        try:
+            with zipfile.ZipFile(str(p), "r") as zf:
+                container = zf.read("META-INF/container.xml").decode("utf-8")
+                m = re.search(r'full-path="([^"]+)"', container)
+                if m:
+                    opf = zf.read(m.group(1)).decode("utf-8", "ignore")
+                    t = re.search(r'<dc:title[^>]*>([^<]+)</dc:title>', opf)
+                    if t:
+                        title = t.group(1).strip()
+                    a = re.search(r'<dc:creator[^>]*>([^<]+)</dc:creator>', opf)
+                    if a:
+                        author = a.group(1).strip()
+        except Exception:
+            pass
+
+    elif p.suffix.lower() in (".cbz", ".zip"):
+        try:
+            with zipfile.ZipFile(str(p), "r") as zf:
+                names = [n for n in zf.namelist() if os.path.basename(n).lower() == "comicinfo.xml"]
+                if names:
+                    xml = zf.read(names[0]).decode("utf-8", "ignore")
+                    t = re.search(r'<Title>([^<]+)</Title>', xml)
+                    if t:
+                        title = t.group(1).strip()
+                    a = re.search(r'<Writer>([^<]+)</Writer>', xml)
+                    if a:
+                        author = a.group(1).strip()
+        except Exception:
+            pass
+
+    elif p.suffix.lower() == ".pdf":
+        try:
+            import fitz  # PyMuPDF
+            doc = fitz.open(str(p))
+            meta = doc.metadata
+            title = (meta.get("title") or "").strip()
+            author = (meta.get("author") or "").strip()
+        except Exception:
+            pass
+
+    return title, author
+
+
 def parse_toc_file(toc_file: str) -> list[tuple]:
     """Parse a --toc-file: one chapter per line, "<page_index><TAB><title>".
     page_index is 0-based, referring to the final digital page order (the
@@ -975,6 +1052,8 @@ def main():
              "For EPUB input, the EPUB's own table of contents is used automatically when present; "
              "--toc-file overrides/supplements that.",
     )
+    parser.add_argument("--title", help="Book title written to meta.bin (overrides value auto-detected from source)")
+    parser.add_argument("--author", help="Book author written to meta.bin (overrides value auto-detected from source)")
     args = parser.parse_args()
 
     api_key = None
@@ -1017,6 +1096,13 @@ def main():
         print(f"Found {len(pages)} pages")
 
         os.makedirs(args.output_dir, exist_ok=True)
+
+        # Extract and write book metadata (title + author).
+        auto_title, auto_author = extract_metadata(args.input, work_dir)
+        meta_title = args.title if args.title else auto_title
+        meta_author = args.author if args.author else auto_author
+        if meta_title or meta_author:
+            write_meta(args.output_dir, meta_title, meta_author)
 
         idx_records = []
         dat_chunks = []

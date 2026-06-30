@@ -45,7 +45,15 @@ void MangaReaderActivity::onEnter() {
 
   APP_STATE.openEpubPath = book->getFolder();
   APP_STATE.saveToFile();
-  RECENT_BOOKS.addBook(book->getFolder(), book->getTitle(), "", book->getPageImagePath(0));
+
+  // Use author from meta.bin; fall back to any author already in recents.
+  std::string bookAuthor = book->getAuthor();
+  if (bookAuthor.empty()) {
+    for (const auto& r : RECENT_BOOKS.getBooks()) {
+      if (r.path == book->getFolder()) { bookAuthor = r.author; break; }
+    }
+  }
+  RECENT_BOOKS.addBook(book->getFolder(), book->getTitle(), bookAuthor, book->getPageImagePath(0));
 
   readingSessionStartMs = millis();
 

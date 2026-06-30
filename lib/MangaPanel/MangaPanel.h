@@ -51,6 +51,7 @@ class MangaBook {
   uint32_t getPageCount() const { return pageCount; }
   const std::string& getFolder() const { return folderPath; }
   std::string getTitle() const;
+  const std::string& getAuthor() const { return author; }
 
   bool loadPagePanels(uint32_t pageIndex, std::vector<Panel>& panels) const;
   uint16_t getPageImgWidth(uint32_t pageIndex) const;
@@ -69,6 +70,8 @@ class MangaBook {
 
  private:
   std::string folderPath;
+  std::string metaTitle;
+  std::string author;
   uint32_t pageCount = 0;
   std::vector<PageInfo> pageIndex;
   std::vector<std::string> imageFiles;
@@ -77,6 +80,7 @@ class MangaBook {
   bool loadIndex();
   bool scanImages();
   void loadToc();
+  void loadMeta();
 };
 
 }  // namespace manga
