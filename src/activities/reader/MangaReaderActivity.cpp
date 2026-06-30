@@ -45,7 +45,7 @@ void MangaReaderActivity::onEnter() {
 
   APP_STATE.openEpubPath = book->getFolder();
   APP_STATE.saveToFile();
-  RECENT_BOOKS.addBook(book->getFolder(), book->getTitle(), "", "");
+  RECENT_BOOKS.addBook(book->getFolder(), book->getTitle(), "", book->getPageImagePath(0));
 
   readingSessionStartMs = millis();
 
