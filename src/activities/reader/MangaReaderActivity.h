@@ -6,6 +6,7 @@
 #include <string>
 #include <vector>
 
+#include "EpubReaderMenuActivity.h"
 #include "activities/Activity.h"
 #include "util/ButtonNavigator.h"
 
@@ -33,6 +34,13 @@ class MangaReaderActivity final : public Activity {
   bool panelsLoaded = false;
 
   bool showTextOverlay = false;
+  bool pendingScreenshot = false;
+  bool ignoreNextConfirmRelease = false;
+  unsigned long readingSessionStartMs = 0;
+
+  bool automaticPageTurnActive = false;
+  unsigned long lastPageTurnTime = 0;
+  unsigned long pageTurnDuration = 0;
 
   ButtonNavigator buttonNavigator;
 
@@ -54,4 +62,6 @@ class MangaReaderActivity final : public Activity {
 
   void launchWordLookup();
   void launchMenu();
+  void onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction action);
+  void toggleAutoPageTurn(uint8_t selectedPageTurnOption);
 };

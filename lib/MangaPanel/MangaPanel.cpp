@@ -12,11 +12,60 @@ namespace manga {
 
 static constexpr size_t IDX_HEADER_SIZE = 8;
 static constexpr size_t IDX_RECORD_SIZE = 12;
-static constexpr size_t PANEL_HEADER_SIZE = 10;
+static constexpr size_t PANEL_HEADER_SIZE = 12;  // x,y,w,h,textCount,pad,translationLen
 static constexpr size_t TEXT_HEADER_SIZE = 10;
 
 static uint16_t readU16(const uint8_t* p) { return p[0] | (p[1] << 8); }
 static uint32_t readU32(const uint8_t* p) { return p[0] | (p[1] << 8) | (p[2] << 16) | (p[3] << 24); }
+
+// Panel zoom crops are saved as p<page>_<panel>.jpg by the mokuro_convert
+// tools (see tools/mokuro_convert/prepare_panels.py). These live alongside
+// the real page images and must be excluded from the page scan.
+static bool isPanelCropFile(const char* name) {
+  if (name[0] != 'p' && name[0] != 'P') return false;
+  const char* p = name + 1;
+  if (!isdigit(static_cast<unsigned char>(*p))) return false;
+  while (isdigit(static_cast<unsigned char>(*p))) p++;
+  if (*p != '_') return false;
+  p++;
+  if (!isdigit(static_cast<unsigned char>(*p))) return false;
+  while (isdigit(static_cast<unsigned char>(*p))) p++;
+  return *p == '.';
+}
+
+static bool containsCaseInsensitive(const std::string& haystack, const char* needle) {
+  std::string lower = haystack;
+  std::transform(lower.begin(), lower.end(), lower.begin(), [](unsigned char c) { return std::tolower(c); });
+  return lower.find(needle) != std::string::npos;
+}
+
+// Sorts page images the same way tools/mokuro_convert/prepare_panels.py
+// orders pages: cover and copyright files are pinned to the very front,
+// since their filenames commonly use a distributor product-code prefix
+// (not a page sequence number) that natural sort would otherwise push to
+// the end. Everything else uses FsHelpers' natural sort.
+static void sortPageFileList(std::vector<std::string>& files) {
+  std::stable_sort(files.begin(), files.end(), [](const std::string& a, const std::string& b) {
+    const bool aCover = containsCaseInsensitive(a, "cover");
+    const bool bCover = containsCaseInsensitive(b, "cover");
+    if (aCover != bCover) return aCover;
+    const bool aCopyright = containsCaseInsensitive(a, "copyright");
+    const bool bCopyright = containsCaseInsensitive(b, "copyright");
+    if (aCopyright != bCopyright) return aCopyright;
+    return false;  // equal priority - resolved by the stable natural sort pass below
+  });
+
+  // Partition out the pinned cover/copyright entries (already at the front
+  // in priority order via the stable sort above), then natural-sort the rest.
+  size_t pinnedCount = 0;
+  while (pinnedCount < files.size() && (containsCaseInsensitive(files[pinnedCount], "cover") ||
+                                        containsCaseInsensitive(files[pinnedCount], "copyright"))) {
+    pinnedCount++;
+  }
+  std::vector<std::string> rest(files.begin() + static_cast<long>(pinnedCount), files.end());
+  FsHelpers::sortFileList(rest);
+  std::copy(rest.begin(), rest.end(), files.begin() + static_cast<long>(pinnedCount));
+}
 
 bool MangaBook::isMangaFolder(const std::string& folderPath) {
   std::string idxPath = folderPath;
@@ -111,7 +160,7 @@ bool MangaBook::scanImages() {
   for (auto file = dir.openNextFile(); file; file = dir.openNextFile()) {
     if (!file.isDirectory()) {
       file.getName(name, sizeof(name));
-      if (name[0] != '.') {
+      if (name[0] != '.' && !isPanelCropFile(name)) {
         std::string_view sv(name);
         if (FsHelpers::hasBmpExtension(sv) || FsHelpers::hasJpgExtension(sv) ||
             FsHelpers::hasPngExtension(sv)) {
@@ -123,8 +172,8 @@ bool MangaBook::scanImages() {
   }
   dir.close();
 
-  FsHelpers::sortFileList(imageFiles);
-  LOG_DBG("MNG", "Found %u BMP images in %s", (unsigned)imageFiles.size(), dirPath.c_str());
+  sortPageFileList(imageFiles);
+  LOG_DBG("MNG", "Found %u page images in %s", (unsigned)imageFiles.size(), dirPath.c_str());
   return true;
 }
 
@@ -203,7 +252,15 @@ bool MangaBook::loadPagePanels(uint32_t pageIdx, std::vector<Panel>& panels) con
     panel.w = readU16(buf.get() + pos + 4);
     panel.h = readU16(buf.get() + pos + 6);
     uint8_t textCount = buf[pos + 8];
+    uint16_t translationLen = readU16(buf.get() + pos + 10);
     pos += PANEL_HEADER_SIZE;
+
+    if (pos + translationLen > pi.dataLength) {
+      LOG_ERR("MNG", "Translation data overrun: need %u bytes", translationLen);
+      return false;
+    }
+    panel.translation.assign(reinterpret_cast<const char*>(buf.get() + pos), translationLen);
+    pos += translationLen;
 
     panel.textBlocks.reserve(textCount);
 

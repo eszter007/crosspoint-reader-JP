@@ -12,9 +12,10 @@ EpubReaderMenuActivity::EpubReaderMenuActivity(GfxRenderer& renderer, MappedInpu
                                                const int bookProgressPercent, const uint8_t currentOrientation,
                                                const bool hasFootnotes, const bool hasWordLookup,
                                                const bool showVerticalToggle, const bool verticalEnabled,
-                                               const bool furiganaEnabled)
+                                               const bool furiganaEnabled, const bool hasPageText)
     : Activity("EpubReaderMenu", renderer, mappedInput),
       menuItems(buildMenuItems(hasFootnotes, hasWordLookup, showVerticalToggle, verticalEnabled, furiganaEnabled)),
+      hasPageText(hasPageText),
       title(title),
       pendingOrientation(currentOrientation),
       pendingVerticalEnabled(verticalEnabled),
@@ -163,7 +164,13 @@ void EpubReaderMenuActivity::render(RenderLock&&) {
           return "";
         }
       },
-      true);
+      true,
+      [this](int index) {
+        if (hasPageText) return false;
+        const auto value = menuItems[index].action;
+        return value == MenuAction::WORD_LOOKUP || value == MenuAction::TRANSLATE_PAGE ||
+               value == MenuAction::DISPLAY_QR;
+      });
 
   // Footer / Hints
   const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_SELECT), tr(STR_DIR_UP), tr(STR_DIR_DOWN));

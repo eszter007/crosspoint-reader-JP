@@ -313,10 +313,17 @@ void EpubReaderActivity::loop() {
       const int bookProgressPercent = clampPercent(static_cast<int>(bookProgress + 0.5f));
       const bool hasWordLookup = isJapaneseBook() && (verticalSection || section) && DictIndex::isAvailable();
       const bool showVerticalToggle = isJapaneseBook();
+      bool hasPageText = false;
+      if (verticalSection) {
+        const VerticalPage* page = verticalSection->getPage();
+        hasPageText = page && !PageTextExtractor::fromVerticalPage(*page).empty();
+      } else if (section && section->currentPage >= 0 && section->currentPage < section->pageCount) {
+        hasPageText = !section->getTextFromSectionFile().empty();
+      }
       startActivityForResult(std::make_unique<EpubReaderMenuActivity>(
                                  renderer, mappedInput, epub->getTitle(), currentPage, totalPages, bookProgressPercent,
                                  SETTINGS.orientation, !currentPageFootnotes.empty(), hasWordLookup,
-                                 showVerticalToggle, useVerticalText(), useFurigana()),
+                                 showVerticalToggle, useVerticalText(), useFurigana(), hasPageText),
                              [this](const ActivityResult& result) {
                                const auto& menu = std::get<MenuResult>(result.data);
                                applyOrientation(menu.orientation);
@@ -619,15 +626,21 @@ void EpubReaderActivity::onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction 
       break;
     }
     case EpubReaderMenuActivity::MenuAction::DISPLAY_QR: {
-      if (section && !verticalSection && section->currentPage >= 0 && section->currentPage < section->pageCount) {
-        std::string fullText = section->getTextFromSectionFile();
-        if (!fullText.empty()) {
-          startActivityForResult(std::make_unique<QrDisplayActivity>(renderer, mappedInput, fullText),
-                                 [this](const ActivityResult& result) {});
-          break;
+      std::string pageText;
+      if (verticalSection) {
+        const VerticalPage* page = verticalSection->getPage();
+        if (page) {
+          pageText = PageTextExtractor::fromVerticalPage(*page);
         }
+      } else if (section && section->currentPage >= 0 && section->currentPage < section->pageCount) {
+        pageText = section->getTextFromSectionFile();
       }
-      // If no text or page loading failed, just close menu
+      if (!pageText.empty()) {
+        startActivityForResult(std::make_unique<QrDisplayActivity>(renderer, mappedInput, pageText),
+                               [this](const ActivityResult& result) {});
+        break;
+      }
+      // If no text (e.g. an image-only page) or page loading failed, just close menu
       requestUpdate();
       break;
     }

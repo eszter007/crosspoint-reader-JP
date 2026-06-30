@@ -49,14 +49,15 @@ Select **Translate Page** from the reader menu to translate the current page fro
 
 Reading aids rendered above (horizontal) or beside (vertical) kanji, with positioning adjustments so dense furigana doesn't overlap base characters. Can be toggled on/off per-book from the reader menu.
 
-### Manga Panel Reader (Mokuro)
+### Manga Panel Reader
 
-Read manga with OCR text overlays and per-panel dictionary lookup. Uses [Mokuro](https://github.com/kha-white/mokuro) for OCR, then a conversion tool packs the panel/text data into a compact binary format the device reads natively.
+Read manga with real panel detection, dictionary lookup, and pre-extracted translations. A conversion tool (`tools/manga_convert/`) detects actual panel rectangles with a YOLO model trained on Manga109, asks Gemini what text appears in each panel (plus an English translation), and packs everything into a compact binary format the device reads natively. Page images (JPG/PNG) are used directly — no BMP conversion needed.
 
-- **Full-page view** — Displays the manga page BMP scaled to screen with panel highlight rectangles
+- **Full-page view** — Displays the manga page scaled to screen with panel highlight rectangles
 - **Panel-by-panel zoom** — Navigate panels in reading order with page turn buttons. Each panel is scaled to fill the screen.
 - **Text overlay** — View OCR'd Japanese text from the current panel, word-wrapped with the reader font
-- **Word lookup** — Press Confirm on a zoomed panel to open dictionary lookup for the panel's text. Same dictionary, deinflection, and grammar features as EPUB word lookup.
+- **Word lookup** — Press Confirm on a zoomed panel (or in full-page view, for the whole page) to open dictionary lookup. Same dictionary, deinflection, and grammar features as EPUB word lookup.
+- **Translate Page** — Shows the translation extracted at conversion time instantly, no network call needed. Falls back to a live Gemini call if no translation was pre-extracted for that panel.
 - **Progress saving** — Current page and panel position saved automatically
 
 ### Image Handling
@@ -215,12 +216,12 @@ The position counter (e.g. 10/35) appears in the header. Words are pre-scanned s
 
 ### Reading Manga
 
-1. Prepare your manga using the mokuro conversion tools (see below)
-2. Copy the output folder to the SD card — it contains BMP page images plus `panels.idx` and `panels.dat`
-3. Open the folder from the file browser — the reader detects it as a manga book automatically
+1. Prepare your manga using `tools/manga_convert/convert_manga.py` (see below)
+2. Copy the output folder to the SD card — it contains page images plus `panels.idx` and `panels.dat`
+3. Open the folder from the file browser, or from the Library (manga appears in the book grid automatically)
 4. **Page turn buttons** — In full-page view, enters panel zoom on the first panel. In panel zoom, cycles through panels then advances to the next page.
 5. **Back** — Returns from panel zoom to full-page view, or from full-page to the file browser
-6. **Confirm** — In panel zoom, opens word lookup for the current panel's text (requires dictionaries)
+6. **Confirm** — In full-page view, opens the reader menu (Word Lookup, Translate Page, Go to %, Bookmarks, etc.). In panel zoom, opens word lookup directly for the current panel's text.
 7. Long-press **Back** — Jump to the file browser from anywhere
 
 ### Toggling Vertical Text
@@ -273,41 +274,46 @@ Output: binary `.idx` (sorted 40-byte records) + `.dat` (UTF-8 definitions) file
 
 ## Manga Conversion Tools
 
-The `tools/mokuro_convert/` directory contains scripts to prepare manga for the device.
+The `tools/manga_convert/convert_manga.py` script prepares manga for the device. It detects real panel rectangles with a YOLO model trained on Manga109 ([leoxs22/manga-panel-detector-yolo26n](https://huggingface.co/leoxs22/manga-panel-detector-yolo26n)), then asks Gemini what text appears in each panel — and for an English translation of it — storing both directly in the panel data so "Translate Page" works instantly offline.
 
-### Quick Start (pre-processed Mokuro)
-
-If you already have Mokuro JSON output from a manga volume:
+### Requirements
 
 ```bash
-python3 tools/mokuro_convert/prepare_panels.py \
-  --input /path/to/mokuro_output/ \
-  --output /path/to/sd/MangaTitle/
+pip install ultralytics huggingface_hub Pillow
 ```
 
-This converts Mokuro's per-page JSON (panel coordinates + OCR text) and page images into the binary format the device reads: `panels.idx`, `panels.dat`, and BMP page images.
+The YOLO weights download automatically on first run and are cached locally. If `ultralytics` isn't installed, the tool falls back to a pure-Pillow white-gutter grid heuristic (lower quality, but zero extra dependencies).
 
-### Full Pipeline (from raw manga images)
-
-If you have raw manga page images and want to run OCR:
+### Usage
 
 ```bash
-python3 tools/mokuro_convert/run_mokuro.py \
+export GEMINI_API_KEY=$(cat /path/to/gemini.key)
+python3 tools/manga_convert/convert_manga.py \
   --input /path/to/manga_pages/ \
-  --output /path/to/sd/MangaTitle/
+  --output-dir /path/to/sd/manga/MangaTitle/
 ```
 
-This runs Mokuro OCR (requires `pip install mokuro`), then converts the output. GPU recommended for OCR speed.
+`--input` accepts an image folder, `.cbz`/`.zip`, or `.epub` (EPUB uses true spine order). Other useful flags:
+
+- `--page-order-file FILE` — explicit page order (one source filename per line) for sources whose filenames don't sort into true reading order
+- `--no-ocr` — skip the Gemini calls entirely; panel boxes only, no text/translation/lookup data
+- `--max-pages N` — only process the first N pages, useful for a quick test before running the full (potentially expensive) batch
+- `--gemini-key-file FILE` — read the API key from a file instead of `GEMINI_API_KEY`
+
+The Gemini API key is never embedded in the script — pass it via `--gemini-key-file` or the environment at runtime.
 
 ### SD Card Layout
 
 ```
-/MangaTitle/
-  001.bmp           # Page images (BMP format)
-  002.bmp
+/manga/MangaTitle/
+  page_0000.jpg     # Page images (JPG/PNG, used directly — no BMP conversion)
+  page_0001.jpg
+  ...
+  p0_0.jpg          # Cropped panel images for panel-zoom view (p<page>_<panel>.jpg)
+  p0_1.jpg
   ...
   panels.idx        # Panel index (binary, auto-generated)
-  panels.dat        # Panel data with OCR text (binary, auto-generated)
+  panels.dat        # Panel boxes, OCR text, and translations (binary, auto-generated)
 ```
 
 The device detects any folder containing `panels.idx` as a manga book.

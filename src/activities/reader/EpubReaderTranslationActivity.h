@@ -7,8 +7,11 @@
 
 class EpubReaderTranslationActivity final : public Activity {
  public:
+  // preTranslatedText: if non-empty, the activity shows it directly without
+  // any network call (used when a translation was already extracted offline
+  // during manga conversion and stored alongside the page data).
   explicit EpubReaderTranslationActivity(GfxRenderer& renderer, MappedInputManager& mappedInput,
-                                         std::string sourceText);
+                                         std::string sourceText, std::string preTranslatedText = "");
 
   void onEnter() override;
   void onExit() override;
@@ -28,6 +31,7 @@ class EpubReaderTranslationActivity final : public Activity {
   std::string sourceText;
   std::string translatedText;
   std::string errorMessage;
+  bool hasPreTranslation = false;
 
   int scrollOffset = 0;
   int maxScrollOffset = 0;

@@ -58,11 +58,22 @@ esp_err_t httpEventHandler(esp_http_client_event_t* evt) {
 }  // namespace
 
 EpubReaderTranslationActivity::EpubReaderTranslationActivity(GfxRenderer& renderer, MappedInputManager& mappedInput,
-                                                             std::string sourceText)
-    : Activity("Translation", renderer, mappedInput), sourceText(std::move(sourceText)) {}
+                                                             std::string sourceText, std::string preTranslatedText)
+    : Activity("Translation", renderer, mappedInput), sourceText(std::move(sourceText)) {
+  if (!preTranslatedText.empty()) {
+    translatedText = std::move(preTranslatedText);
+    hasPreTranslation = true;
+    state = SHOWING_RESULT;
+  }
+}
 
 void EpubReaderTranslationActivity::onEnter() {
   Activity::onEnter();
+
+  if (hasPreTranslation) {
+    requestUpdate();
+    return;
+  }
 
   WiFi.mode(WIFI_STA);
 
@@ -73,7 +84,7 @@ void EpubReaderTranslationActivity::onEnter() {
 void EpubReaderTranslationActivity::onExit() {
   Activity::onExit();
 
-  if (WiFi.getMode() != WIFI_MODE_NULL) {
+  if (!hasPreTranslation && WiFi.getMode() != WIFI_MODE_NULL) {
     WiFi.disconnect(false);
     delay(30);
     silentRestartToReader();

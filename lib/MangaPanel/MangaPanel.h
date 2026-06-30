@@ -8,7 +8,7 @@
 
 namespace manga {
 
-static constexpr uint32_t FORMAT_VERSION = 1;
+static constexpr uint32_t FORMAT_VERSION = 2;  // v2 adds per-panel translation string
 
 struct TextBlock {
   uint16_t x, y, w, h;
@@ -18,6 +18,7 @@ struct TextBlock {
 struct Panel {
   uint16_t x, y, w, h;
   std::vector<TextBlock> textBlocks;
+  std::string translation;  // pre-extracted English translation, may be empty
 };
 
 struct PageInfo {

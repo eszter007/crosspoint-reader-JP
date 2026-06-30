@@ -29,11 +29,20 @@ class EpubReaderMenuActivity final : public Activity {
     TOGGLE_FURIGANA
   };
 
+  // hasWordLookup gates whether Word Lookup appears at all (book-level: is
+  // there a dictionary + is this a supported language) -- stable across a
+  // book's pages, so hiding it doesn't shift other items around per-page.
+  // hasPageText reflects whether the CURRENT page/panel actually has text
+  // to act on; when false, Word Lookup/Translate/QR are dimmed (still
+  // shown, still navigable) rather than hidden, since that can change
+  // page-to-page (e.g. manga panels without OCR'd dialogue, image-only
+  // EPUB pages) and hiding/showing per-page would shift menu positions.
   explicit EpubReaderMenuActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, const std::string& title,
                                   const int currentPage, const int totalPages, const int bookProgressPercent,
                                   const uint8_t currentOrientation, const bool hasFootnotes,
                                   const bool hasWordLookup = false, const bool showVerticalToggle = false,
-                                  const bool verticalEnabled = false, const bool furiganaEnabled = true);
+                                  const bool verticalEnabled = false, const bool furiganaEnabled = true,
+                                  const bool hasPageText = true);
 
   void onEnter() override;
   void onExit() override;
@@ -50,6 +59,7 @@ class EpubReaderMenuActivity final : public Activity {
                                                bool verticalEnabled, bool furiganaEnabled);
 
   std::vector<MenuItem> menuItems;
+  bool hasPageText = true;
 
   int selectedIndex = 0;
 

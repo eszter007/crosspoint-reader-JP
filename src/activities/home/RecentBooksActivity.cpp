@@ -12,6 +12,8 @@
 #include <memory>
 
 #include <Epub.h>
+#include <Epub/converters/ImageDecoderFactory.h>
+#include <Epub/converters/ImageToFramebufferDecoder.h>
 
 #include "MappedInputManager.h"
 #include "RecentBooksStore.h"
@@ -60,14 +62,58 @@ void RecentBooksActivity::loadRecentBooks() {
     dir.rewindDirectory();
     for (auto f = dir.openNextFile(); f; f = dir.openNextFile()) {
       f.getName(nameBuf.get(), NAME_BUF);
-      if (nameBuf[0] == '.' || f.isDirectory()) continue;
+      if (nameBuf[0] == '.') continue;
+
+      std::string fullPath = std::string(dirPath);
+      if (fullPath.back() != '/') fullPath += '/';
+      fullPath += nameBuf.get();
+
+      if (f.isDirectory()) {
+        // Check if this directory is a manga folder (contains panels.idx)
+        std::string idxPath = fullPath + "/panels.idx";
+        if (Storage.exists(idxPath.c_str())) {
+          bool alreadyInRecents = false;
+          for (const auto& r : recentBooks) {
+            if (r.path == fullPath) { alreadyInRecents = true; break; }
+          }
+          if (!alreadyInRecents) {
+            RecentBook book;
+            book.path = fullPath;
+            book.title = std::string(nameBuf.get());
+
+            // Use the first image file (alphabetically) as the cover.
+            auto mangaDir = Storage.open(fullPath.c_str());
+            if (mangaDir && mangaDir.isDirectory()) {
+              mangaDir.rewindDirectory();
+              std::string firstImage;
+              for (auto mf = mangaDir.openNextFile(); mf; mf = mangaDir.openNextFile()) {
+                char imgName[200];
+                mf.getName(imgName, sizeof(imgName));
+                if (imgName[0] != '.' && !mf.isDirectory()) {
+                  std::string_view imgFn{imgName};
+                  if (FsHelpers::hasJpgExtension(imgFn) || FsHelpers::hasPngExtension(imgFn) ||
+                      FsHelpers::hasBmpExtension(imgFn)) {
+                    if (firstImage.empty() || imgFn < firstImage) firstImage = imgName;
+                  }
+                }
+              }
+              mangaDir.close();
+              if (!firstImage.empty()) {
+                book.coverBmpPath = fullPath + "/" + firstImage;
+              }
+            }
+
+            recentBooks.push_back(std::move(book));
+          }
+        }
+        continue;
+      }
+
       std::string_view fn{nameBuf.get()};
       if (!FsHelpers::hasEpubExtension(fn) && !FsHelpers::hasXtcExtension(fn) &&
           !FsHelpers::hasTxtExtension(fn) && !FsHelpers::hasMarkdownExtension(fn))
         continue;
-      std::string fullPath = std::string(dirPath);
-      if (fullPath.back() != '/') fullPath += '/';
-      fullPath += fn;
+
       bool alreadyInRecents = false;
       for (const auto& r : recentBooks) {
         if (r.path == fullPath) { alreadyInRecents = true; break; }
@@ -173,7 +219,15 @@ void RecentBooksActivity::loadShelves() {
     for (auto file = root.openNextFile(); file; file = root.openNextFile()) {
       file.getName(countBuf, COUNT_BUF_SIZE);
       if (countBuf[0] == '.') continue;
-      if (file.isDirectory()) continue;
+      if (file.isDirectory()) {
+        // Count manga folders (containing panels.idx)
+        std::string subDir = shelf.folderPath;
+        if (subDir.back() != '/') subDir += '/';
+        subDir += countBuf;
+        std::string idxCheck = subDir + "/panels.idx";
+        if (Storage.exists(idxCheck.c_str())) count++;
+        continue;
+      }
       std::string_view fn{countBuf};
       if (FsHelpers::hasEpubExtension(fn) || FsHelpers::hasXtcExtension(fn) || FsHelpers::hasTxtExtension(fn)) {
         count++;
@@ -536,22 +590,41 @@ void RecentBooksActivity::renderBooksTab(int contentTop, int contentHeight) {
       bool hasCover = false;
       if (!book.coverBmpPath.empty()) {
         const std::string coverPath = UITheme::getCoverThumbPath(book.coverBmpPath, thumbHeight);
-        HalFile file;
-        if (Storage.openFileForRead("LIB", coverPath, file)) {
-          Bitmap bitmap(file);
-          if (bitmap.parseHeaders() == BmpReaderError::Ok) {
-            const float bmpRatio = static_cast<float>(bitmap.getWidth()) / static_cast<float>(bitmap.getHeight());
-            const float cellRatio = static_cast<float>(coverWidth) / static_cast<float>(coverHeight);
-            float cropX = 0.0f, cropY = 0.0f;
-            if (bmpRatio > cellRatio) {
-              cropX = 1.0f - (cellRatio / bmpRatio);
-            } else {
-              cropY = 1.0f - (bmpRatio / cellRatio);
+        if (FsHelpers::hasJpgExtension(coverPath) || FsHelpers::hasPngExtension(coverPath)) {
+          ImageToFramebufferDecoder* decoder = ImageDecoderFactory::getDecoder(coverPath);
+          if (decoder) {
+            ImageDimensions dims = {0, 0};
+            if (decoder->getDimensions(coverPath, dims) && dims.width > 0 && dims.height > 0) {
+              RenderConfig config;
+              config.x = coverX;
+              config.y = coverY;
+              config.maxWidth = coverWidth;
+              config.maxHeight = coverHeight;
+              config.useGrayscale = false;
+              config.useDithering = true;
+              if (decoder->decodeToFramebuffer(coverPath, renderer, config)) {
+                hasCover = true;
+              }
             }
-            renderer.drawBitmap(bitmap, coverX, coverY, coverWidth, coverHeight, cropX, cropY);
-            hasCover = true;
           }
-          file.close();
+        } else {
+          HalFile file;
+          if (Storage.openFileForRead("LIB", coverPath, file)) {
+            Bitmap bitmap(file);
+            if (bitmap.parseHeaders() == BmpReaderError::Ok) {
+              const float bmpRatio = static_cast<float>(bitmap.getWidth()) / static_cast<float>(bitmap.getHeight());
+              const float cellRatio = static_cast<float>(coverWidth) / static_cast<float>(coverHeight);
+              float cropX = 0.0f, cropY = 0.0f;
+              if (bmpRatio > cellRatio) {
+                cropX = 1.0f - (cellRatio / bmpRatio);
+              } else {
+                cropY = 1.0f - (bmpRatio / cellRatio);
+              }
+              renderer.drawBitmap(bitmap, coverX, coverY, coverWidth, coverHeight, cropX, cropY);
+              hasCover = true;
+            }
+            file.close();
+          }
         }
       }
 
@@ -716,22 +789,41 @@ void RecentBooksActivity::renderShelfBooksView(int contentTop, int contentHeight
       bool hasCover = false;
       if (!book.coverBmpPath.empty()) {
         const std::string coverPath = UITheme::getCoverThumbPath(book.coverBmpPath, thumbHeight);
-        HalFile file;
-        if (Storage.openFileForRead("LIB", coverPath, file)) {
-          Bitmap bitmap(file);
-          if (bitmap.parseHeaders() == BmpReaderError::Ok) {
-            const float bmpRatio = static_cast<float>(bitmap.getWidth()) / static_cast<float>(bitmap.getHeight());
-            const float cellRatio = static_cast<float>(coverWidth) / static_cast<float>(coverHeight);
-            float cropX = 0.0f, cropY = 0.0f;
-            if (bmpRatio > cellRatio) {
-              cropX = 1.0f - (cellRatio / bmpRatio);
-            } else {
-              cropY = 1.0f - (bmpRatio / cellRatio);
+        if (FsHelpers::hasJpgExtension(coverPath) || FsHelpers::hasPngExtension(coverPath)) {
+          ImageToFramebufferDecoder* decoder = ImageDecoderFactory::getDecoder(coverPath);
+          if (decoder) {
+            ImageDimensions dims = {0, 0};
+            if (decoder->getDimensions(coverPath, dims) && dims.width > 0 && dims.height > 0) {
+              RenderConfig config;
+              config.x = coverX;
+              config.y = coverY;
+              config.maxWidth = coverWidth;
+              config.maxHeight = coverHeight;
+              config.useGrayscale = false;
+              config.useDithering = true;
+              if (decoder->decodeToFramebuffer(coverPath, renderer, config)) {
+                hasCover = true;
+              }
             }
-            renderer.drawBitmap(bitmap, coverX, coverY, coverWidth, coverHeight, cropX, cropY);
-            hasCover = true;
           }
-          file.close();
+        } else {
+          HalFile file;
+          if (Storage.openFileForRead("LIB", coverPath, file)) {
+            Bitmap bitmap(file);
+            if (bitmap.parseHeaders() == BmpReaderError::Ok) {
+              const float bmpRatio = static_cast<float>(bitmap.getWidth()) / static_cast<float>(bitmap.getHeight());
+              const float cellRatio = static_cast<float>(coverWidth) / static_cast<float>(coverHeight);
+              float cropX = 0.0f, cropY = 0.0f;
+              if (bmpRatio > cellRatio) {
+                cropX = 1.0f - (cellRatio / bmpRatio);
+              } else {
+                cropY = 1.0f - (bmpRatio / cellRatio);
+              }
+              renderer.drawBitmap(bitmap, coverX, coverY, coverWidth, coverHeight, cropX, cropY);
+              hasCover = true;
+            }
+            file.close();
+          }
         }
       }
 
