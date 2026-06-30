@@ -1,5 +1,8 @@
 #include "LyraTheme.h"
 
+#include <Epub/converters/ImageDecoderFactory.h>
+#include <Epub/converters/ImageToFramebufferDecoder.h>
+#include <FsHelpers.h>
 #include <GfxRenderer.h>
 #include <HalGPIO.h>
 #include <HalPowerManager.h>
@@ -435,19 +438,45 @@ void LyraTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, const std:
         const std::string coverBmpPath = UITheme::getCoverThumbPath(coverPath, LyraMetrics::values.homeCoverHeight);
 
         // First time: load cover from SD and render
-        HalFile file;
-        if (Storage.openFileForRead("HOME", coverBmpPath, file)) {
-          Bitmap bitmap(file);
-          if (bitmap.parseHeaders() == BmpReaderError::Ok) {
-            coverWidth = bitmap.getWidth();
-            renderer.drawBitmap(bitmap, tileX + hPaddingInSelection, tileY + hPaddingInSelection, coverWidth,
-                                LyraMetrics::values.homeCoverHeight);
+        if (FsHelpers::hasJpgExtension(coverBmpPath) || FsHelpers::hasPngExtension(coverBmpPath)) {
+          ImageToFramebufferDecoder* decoder = ImageDecoderFactory::getDecoder(coverBmpPath);
+          if (decoder) {
+            ImageDimensions dims = {0, 0};
+            if (decoder->getDimensions(coverBmpPath, dims) && dims.width > 0 && dims.height > 0) {
+              const int drawW = LyraMetrics::values.homeCoverHeight * dims.width / dims.height;
+              RenderConfig config;
+              config.x = tileX + hPaddingInSelection;
+              config.y = tileY + hPaddingInSelection;
+              config.maxWidth = drawW;
+              config.maxHeight = LyraMetrics::values.homeCoverHeight;
+              config.useGrayscale = false;
+              config.useDithering = true;
+              if (decoder->decodeToFramebuffer(coverBmpPath, renderer, config)) {
+                coverWidth = drawW;
+              } else {
+                hasCover = false;
+              }
+            } else {
+              hasCover = false;
+            }
           } else {
             hasCover = false;
           }
-          file.close();
         } else {
-          hasCover = false;
+          HalFile file;
+          if (Storage.openFileForRead("HOME", coverBmpPath, file)) {
+            Bitmap bitmap(file);
+            if (bitmap.parseHeaders() == BmpReaderError::Ok) {
+              coverWidth = bitmap.getWidth();
+              renderer.drawBitmap(bitmap, tileX + hPaddingInSelection, tileY + hPaddingInSelection, coverWidth,
+                                  LyraMetrics::values.homeCoverHeight);
+            } else {
+              hasCover = false;
+            }
+            file.close();
+          } else {
+            hasCover = false;
+          }
         }
       }
 

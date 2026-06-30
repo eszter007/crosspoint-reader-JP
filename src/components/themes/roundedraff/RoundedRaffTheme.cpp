@@ -1,5 +1,8 @@
 #include "RoundedRaffTheme.h"
 
+#include <Epub/converters/ImageDecoderFactory.h>
+#include <Epub/converters/ImageToFramebufferDecoder.h>
+#include <FsHelpers.h>
 #include <GfxRenderer.h>
 #include <HalStorage.h>
 #include <I18n.h>
@@ -141,20 +144,49 @@ void RoundedRaffTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, con
             UITheme::getCoverThumbPath(coverPath, RoundedRaffMetrics::values.homeCoverHeight);
 
         // First time: load cover from SD and render
-        HalFile file;
-        if (Storage.openFileForRead("HOME", coverBmpPath, file)) {
-          Bitmap bitmap(file);
-          if (bitmap.parseHeaders() == BmpReaderError::Ok) {
-            coverWidth = bitmap.getWidth();
-            renderer.drawBitmap(bitmap, tileX + (tileWidth - coverWidth) / 2, imgY, coverWidth,
-                                RoundedRaffMetrics::values.homeCoverHeight);
-            renderer.maskRoundedRectOutsideCorners(tileX + (tileWidth - coverWidth) / 2, imgY, coverWidth,
-                                                   RoundedRaffMetrics::values.homeCoverHeight, kCoverRadius,
-                                                   Color::LightGray);
+        if (FsHelpers::hasJpgExtension(coverBmpPath) || FsHelpers::hasPngExtension(coverBmpPath)) {
+          ImageToFramebufferDecoder* decoder = ImageDecoderFactory::getDecoder(coverBmpPath);
+          if (decoder) {
+            ImageDimensions dims = {0, 0};
+            if (decoder->getDimensions(coverBmpPath, dims) && dims.width > 0 && dims.height > 0) {
+              const int drawW = RoundedRaffMetrics::values.homeCoverHeight * dims.width / dims.height;
+              RenderConfig config;
+              config.x = tileX + (tileWidth - drawW) / 2;
+              config.y = imgY;
+              config.maxWidth = drawW;
+              config.maxHeight = RoundedRaffMetrics::values.homeCoverHeight;
+              config.useGrayscale = false;
+              config.useDithering = true;
+              if (decoder->decodeToFramebuffer(coverBmpPath, renderer, config)) {
+                coverWidth = drawW;
+                renderer.maskRoundedRectOutsideCorners(tileX + (tileWidth - coverWidth) / 2, imgY, coverWidth,
+                                                       RoundedRaffMetrics::values.homeCoverHeight, kCoverRadius,
+                                                       Color::LightGray);
+              } else {
+                hasCover = false;
+              }
+            } else {
+              hasCover = false;
+            }
           } else {
             hasCover = false;
           }
-          file.close();
+        } else {
+          HalFile file;
+          if (Storage.openFileForRead("HOME", coverBmpPath, file)) {
+            Bitmap bitmap(file);
+            if (bitmap.parseHeaders() == BmpReaderError::Ok) {
+              coverWidth = bitmap.getWidth();
+              renderer.drawBitmap(bitmap, tileX + (tileWidth - coverWidth) / 2, imgY, coverWidth,
+                                  RoundedRaffMetrics::values.homeCoverHeight);
+              renderer.maskRoundedRectOutsideCorners(tileX + (tileWidth - coverWidth) / 2, imgY, coverWidth,
+                                                     RoundedRaffMetrics::values.homeCoverHeight, kCoverRadius,
+                                                     Color::LightGray);
+            } else {
+              hasCover = false;
+            }
+            file.close();
+          }
         }
       }
 

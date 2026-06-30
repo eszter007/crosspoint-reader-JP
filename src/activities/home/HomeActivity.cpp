@@ -3,6 +3,7 @@
 #include <Bitmap.h>
 #include <Epub.h>
 #include <FsHelpers.h>
+#include <MangaPanel.h>
 #include <GfxRenderer.h>
 #include <HalStorage.h>
 #include <I18n.h>
@@ -59,6 +60,26 @@ void HomeActivity::loadRecentBooks(int maxBooks) {
       cachePath = "/.crosspoint/epub_" + std::to_string(std::hash<std::string>{}(path));
     else if (FsHelpers::hasXtcExtension(path))
       cachePath = "/.crosspoint/xtc_" + std::to_string(std::hash<std::string>{}(path));
+    else if (manga::MangaBook::isMangaFolder(path)) {
+      std::string mangaCache = "/.crosspoint/manga_" + std::to_string(std::hash<std::string>{}(path));
+      HalFile f;
+      if (Storage.openFileForRead("HOME", mangaCache + "/progress.bin", f)) {
+        uint8_t data[4];
+        if (f.read(data, 4) == 4) {
+          uint32_t currentPage = data[0] | (data[1] << 8) | (data[2] << 16) | (data[3] << 24);
+          HalFile idxFile;
+          if (Storage.openFileForRead("HOME", path + "/panels.idx", idxFile)) {
+            uint8_t hdr[8];
+            if (idxFile.read(hdr, 8) == 8) {
+              uint32_t totalPages = hdr[4] | (hdr[5] << 8) | (hdr[6] << 16) | (hdr[7] << 24);
+              if (totalPages > 0)
+                currentBookProgress = std::clamp(
+                    static_cast<int>((static_cast<float>(currentPage) / totalPages) * 100.0f + 0.5f), 0, 100);
+            }
+          }
+        }
+      }
+    }
     if (!cachePath.empty()) {
       HalFile f;
       if (Storage.openFileForRead("HOME", cachePath + "/progress.bin", f)) {
