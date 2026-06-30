@@ -73,14 +73,24 @@ void RecentBooksActivity::loadRecentBooks() {
         // Check if this directory is a manga folder (contains panels.idx)
         std::string idxPath = fullPath + "/panels.idx";
         if (Storage.exists(idxPath.c_str())) {
-          bool alreadyInRecents = false;
-          for (const auto& r : recentBooks) {
-            if (r.path == fullPath) { alreadyInRecents = true; break; }
+          // Find existing recents entry -- may exist but with empty cover.
+          RecentBook* existing = nullptr;
+          for (auto& r : recentBooks) {
+            if (r.path == fullPath) { existing = &r; break; }
           }
-          if (!alreadyInRecents) {
-            RecentBook book;
-            book.path = fullPath;
-            book.title = std::string(nameBuf.get());
+          if (existing == nullptr) {
+            RecentBook newBook;
+            newBook.path = fullPath;
+            newBook.title = std::string(nameBuf.get());
+            recentBooks.push_back(std::move(newBook));
+            existing = &recentBooks.back();
+          }
+          if (existing->coverBmpPath.empty()) {
+            // Populate cover -- runs both for new entries and for
+            // existing ones that were stored without a cover (e.g. when
+            // addBook was called from the reader with an empty cover path).
+            RecentBook& book = *existing;
+            {
 
             // Use the first manga PAGE as the cover -- not just the
             // alphabetically-first image file, since panel-zoom crop files
@@ -113,9 +123,8 @@ void RecentBooksActivity::loadRecentBooks() {
                 book.coverBmpPath = fullPath + "/" + chosen;
               }
             }
-
-            recentBooks.push_back(std::move(book));
-          }
+            }  // close cover scan block
+          }  // close coverBmpPath.empty() check
         }
         continue;
       }
@@ -387,6 +396,21 @@ int RecentBooksActivity::readProgressPercent(const std::string& bookPath) const 
     cachePath = "/.crosspoint/epub_" + std::to_string(std::hash<std::string>{}(bookPath));
   } else if (FsHelpers::hasXtcExtension(bookPath)) {
     cachePath = "/.crosspoint/xtc_" + std::to_string(std::hash<std::string>{}(bookPath));
+  } else if (manga::MangaBook::isMangaFolder(bookPath)) {
+    std::string mangaCachePath = "/.crosspoint/manga_" + std::to_string(std::hash<std::string>{}(bookPath));
+    HalFile f;
+    if (!Storage.openFileForRead("LIB", mangaCachePath + "/progress.bin", f)) return 0;
+    uint8_t data[4];
+    if (f.read(data, 4) != 4) return 0;
+    uint32_t currentPage = data[0] | (data[1] << 8) | (data[2] << 16) | (data[3] << 24);
+    HalFile idxFile;
+    if (!Storage.openFileForRead("LIB", bookPath + "/panels.idx", idxFile)) return 0;
+    uint8_t hdr[8];
+    if (idxFile.read(hdr, 8) != 8) return 0;
+    uint32_t totalPages = hdr[4] | (hdr[5] << 8) | (hdr[6] << 16) | (hdr[7] << 24);
+    if (totalPages == 0) return 0;
+    int pct = static_cast<int>((static_cast<float>(currentPage) / static_cast<float>(totalPages)) * 100.0f + 0.5f);
+    return std::clamp(pct, 0, 100);
   } else {
     return -1;
   }
