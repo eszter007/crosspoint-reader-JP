@@ -789,6 +789,27 @@ void RecentBooksActivity::renderShelvesTab(int contentTop, int contentHeight) {
         }
         file.close();
       }
+    } else if (!shelf.coverBmpPath.empty() && (FsHelpers::hasJpgExtension(shelf.coverBmpPath) ||
+                                               FsHelpers::hasPngExtension(shelf.coverBmpPath))) {
+      // Manga covers are JPG/PNG page images (no pre-rendered shelf thumb) --
+      // decode and scale directly into the thumb slot.
+      ImageToFramebufferDecoder* decoder = ImageDecoderFactory::getDecoder(shelf.coverBmpPath);
+      if (decoder) {
+        ImageDimensions dims = {0, 0};
+        if (decoder->getDimensions(shelf.coverBmpPath, dims) && dims.width > 0 && dims.height > 0) {
+          const int drawW = SHELF_THUMB_HEIGHT * dims.width / dims.height;
+          RenderConfig config;
+          config.x = thumbX + (SHELF_THUMB_WIDTH - drawW) / 2;
+          config.y = thumbY;
+          config.maxWidth = drawW;
+          config.maxHeight = SHELF_THUMB_HEIGHT;
+          config.useGrayscale = false;
+          config.useDithering = true;
+          if (decoder->decodeToFramebuffer(shelf.coverBmpPath, renderer, config)) {
+            hasThumb = true;
+          }
+        }
+      }
     }
 
     if (!hasThumb) {
