@@ -81,6 +81,14 @@ void MangaReaderActivity::onExit() {
   saveProgress();
   panels.clear();
   book.reset();
+
+  // Reset orientation back to portrait for the rest of the UI (matches
+  // EpubReaderActivity/TxtReaderActivity) -- Home/Library never call
+  // applyOrientation themselves, so any rotation left active here (from the
+  // reading orientation setting, or a page/panel that triggered the
+  // fill-the-screen rotate) would otherwise leak into their layout.
+  renderer.setOrientation(GfxRenderer::Orientation::Portrait);
+
   Activity::onExit();
 }
 
