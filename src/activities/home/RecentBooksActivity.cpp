@@ -52,20 +52,33 @@ void RecentBooksActivity::loadRecentBooks() {
   // Start with recent books (most recently opened first).
   recentBooks = RECENT_BOOKS.getBooks();
 
-  // Scan the SD card root for all book files not already in recents.
   constexpr size_t NAME_BUF = 500;
   auto nameBuf = makeUniqueNoThrow<char[]>(NAME_BUF);
   if (!nameBuf) return;
 
-  auto scanDir = [&](const char* dirPath) {
-    auto dir = Storage.open(dirPath);
-    if (!dir || !dir.isDirectory()) return;
+  // Iterative (stack-based, not recursive) directory walk so manga/book
+  // folders are found at ANY nesting depth -- not just the SD root or one
+  // level down. A manga folder (contains panels.idx) is a leaf: its
+  // contents are page images, not something to descend into further.
+  std::vector<std::string> dirStack;
+  dirStack.reserve(16);
+  dirStack.push_back("/");
+
+  while (!dirStack.empty()) {
+    std::string dirPath = std::move(dirStack.back());
+    dirStack.pop_back();
+
+    auto dir = Storage.open(dirPath.c_str());
+    if (!dir || !dir.isDirectory()) continue;
     dir.rewindDirectory();
+
     for (auto f = dir.openNextFile(); f; f = dir.openNextFile()) {
       f.getName(nameBuf.get(), NAME_BUF);
       if (nameBuf[0] == '.') continue;
+      if (strcmp(nameBuf.get(), "System Volume Information") == 0) continue;
+      if (strcmp(nameBuf.get(), "dict") == 0) continue;
 
-      std::string fullPath = std::string(dirPath);
+      std::string fullPath = dirPath;
       if (fullPath.back() != '/') fullPath += '/';
       fullPath += nameBuf.get();
 
@@ -125,6 +138,9 @@ void RecentBooksActivity::loadRecentBooks() {
             }
             }  // close cover scan block
           }  // close coverBmpPath.empty() check
+        } else {
+          // Not a manga folder itself -- descend into it to find books/manga nested deeper.
+          dirStack.push_back(std::move(fullPath));
         }
         continue;
       }
@@ -146,22 +162,6 @@ void RecentBooksActivity::loadRecentBooks() {
       recentBooks.push_back(std::move(book));
     }
     dir.close();
-  };
-  scanDir("/");
-
-  // Also scan subdirectories one level deep.
-  auto root = Storage.open("/");
-  if (root && root.isDirectory()) {
-    root.rewindDirectory();
-    for (auto f = root.openNextFile(); f; f = root.openNextFile()) {
-      f.getName(nameBuf.get(), NAME_BUF);
-      if (nameBuf[0] == '.' || !f.isDirectory()) continue;
-      if (strcmp(nameBuf.get(), "System Volume Information") == 0) continue;
-      if (strcmp(nameBuf.get(), "dict") == 0) continue;
-      std::string subPath = std::string("/") + nameBuf.get();
-      scanDir(subPath.c_str());
-    }
-    root.close();
   }
 
   // Generate cover thumbnails for books that don't have one yet.

@@ -296,8 +296,8 @@ void MangaReaderActivity::renderFullPage() {
     return;
   }
 
-  const int screenW = renderer.getScreenWidth();
-  const int screenH = renderer.getScreenHeight();
+  int screenW = renderer.getScreenWidth();
+  int screenH = renderer.getScreenHeight();
 
   // Use the image decoder (supports JPG/PNG/BMP) for proper grayscale rendering.
   ImageToFramebufferDecoder* decoder = ImageDecoderFactory::getDecoder(imgPath);
@@ -312,6 +312,22 @@ void MangaReaderActivity::renderFullPage() {
     renderer.drawCenteredText(UI_12_FONT_ID, screenH / 2, tr(STR_PAGE_LOAD_ERROR), true);
     renderer.displayBuffer();
     return;
+  }
+
+  // Rotate when the page's aspect doesn't match the screen's -- same
+  // fill-the-screen behavior as panel-zoom (renderPanelZoom): this lets a
+  // portrait manga page fill a landscape-oriented screen edge-to-edge
+  // instead of shrinking to a small centered box. The user tilts the
+  // device to read a rotated page.
+  const auto savedOrientation = renderer.getOrientation();
+  const bool screenIsPortrait = screenH > screenW;
+  const bool pageIsLandscape = dims.width > dims.height;
+  const bool rotatePage = screenIsPortrait == pageIsLandscape;
+  if (rotatePage) {
+    const auto rotatedOrientation = static_cast<GfxRenderer::Orientation>((savedOrientation + 3) % 4);
+    renderer.setOrientation(rotatedOrientation);
+    screenW = renderer.getScreenWidth();
+    screenH = renderer.getScreenHeight();
   }
 
   int x = 0, y = 0;
@@ -370,6 +386,10 @@ void MangaReaderActivity::renderFullPage() {
   renderer.displayGrayBuffer();
   renderer.setRenderMode(GfxRenderer::BW);
   renderer.restoreBwBuffer();
+
+  if (rotatePage) {
+    renderer.setOrientation(savedOrientation);
+  }
 }
 
 void MangaReaderActivity::renderPanelZoom() {
