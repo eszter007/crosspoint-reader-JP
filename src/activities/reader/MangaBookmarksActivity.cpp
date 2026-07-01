@@ -1,4 +1,4 @@
-#include "EpubReaderBookmarksActivity.h"
+#include "MangaBookmarksActivity.h"
 
 #include <GfxRenderer.h>
 #include <HalStorage.h>
@@ -9,7 +9,6 @@
 #include <algorithm>
 
 #include "MappedInputManager.h"
-#include "ProgressMapper.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
 
@@ -23,48 +22,44 @@ constexpr int DELETE_MODE_CONFIRM = 2;
 constexpr int LINE_HEIGHT = 60;
 }  // namespace
 
-void EpubReaderBookmarksActivity::onEnter() {
+void MangaBookmarksActivity::onEnter() {
   Activity::onEnter();
 
-  if (!epub) {
-    return;
-  }
-
-  const std::string path = BookmarkUtil::getBookmarkPath(epubPath);
+  const std::string path = BookmarkUtil::getBookmarkPath(bookPath);
   if (Storage.exists(path.c_str())) {
     String json = Storage.readFile(path.c_str());
     if (json.isEmpty()) {
-      LOG_ERR("EPB", "Failed to load bookmarks from %s. Empty bookmark file", path.c_str());
+      LOG_ERR("MNG", "Failed to load bookmarks from %s. Empty bookmark file", path.c_str());
       bookmarks.clear();
       bookmarks.shrink_to_fit();
     } else {
       JsonSettingsIO::loadBookmarks(bookmarks, json.c_str());
     }
   } else {
-    LOG_DBG("EPB", "No bookmark file found at %s, starting with empty bookmarks", path.c_str());
+    LOG_DBG("MNG", "No bookmark file found at %s, starting with empty bookmarks", path.c_str());
     bookmarks.clear();
     bookmarks.shrink_to_fit();
   }
-  LOG_DBG("EPB", "Loaded %d bookmarks for book: %s", static_cast<int>(bookmarks.size()), epubPath.c_str());
+  LOG_DBG("MNG", "Loaded %d bookmarks for book: %s", static_cast<int>(bookmarks.size()), bookPath.c_str());
 
   // Trigger first update
   requestUpdate();
 }
 
-void EpubReaderBookmarksActivity::onExit() { Activity::onExit(); }
+void MangaBookmarksActivity::onExit() { Activity::onExit(); }
 
-int EpubReaderBookmarksActivity::getGutterBottom(const GfxRenderer& renderer) {
+int MangaBookmarksActivity::getGutterBottom(const GfxRenderer& renderer) {
   const auto orientation = renderer.getOrientation();
   const bool isPortrait = orientation == GfxRenderer::Orientation::Portrait;
   return isPortrait ? 75 : 40;  // Reserve vertical space for button hints at the bottom
 }
 
-int EpubReaderBookmarksActivity::getListHeight(const GfxRenderer& renderer) {
+int MangaBookmarksActivity::getListHeight(const GfxRenderer& renderer) {
   const auto pageHeight = renderer.getScreenHeight();
   return pageHeight - getGutterBottom(renderer) - LINE_HEIGHT;  // Reserve vertical space for title and button hints
 }
 
-void EpubReaderBookmarksActivity::loop() {
+void MangaBookmarksActivity::loop() {
   // Delete confirmation mode
   if (confirmingDelete >= DELETE_MODE_DISPLAY) {
     if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
@@ -74,10 +69,10 @@ void EpubReaderBookmarksActivity::loop() {
         return;
       }
       bookmarks.erase(bookmarks.begin() + selectorIndex);
-      const std::string path = BookmarkUtil::getBookmarkPath(epubPath);
+      const std::string path = BookmarkUtil::getBookmarkPath(bookPath);
       Storage.mkdir(BookmarkUtil::getBookmarksDir().c_str());
       if (!JsonSettingsIO::saveBookmarks(bookmarks, path.c_str())) {
-        LOG_ERR("EPB", "Failed to save bookmarks after delete");
+        LOG_ERR("MNG", "Failed to save bookmarks after delete");
       }
 
       // Move selector up if we deleted the last item
@@ -107,9 +102,8 @@ void EpubReaderBookmarksActivity::loop() {
     if (bookmarks.empty()) {
       return;
     }
-    auto bookmark = bookmarks.at(selectorIndex);
-    CrossPointPosition pos = ProgressMapper::toCrossPoint(epub, {bookmark.xpath, bookmark.percentage}, renderer);
-    setResult(ProgressChangeResult{pos.spineIndex, pos.pageNumber});
+    const auto& bookmark = bookmarks.at(selectorIndex);
+    setResult(PageResult{bookmark.computedChapterProgress});
     finish();
     return;
   } else if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
@@ -151,7 +145,7 @@ void EpubReaderBookmarksActivity::loop() {
   });
 }
 
-void EpubReaderBookmarksActivity::render(RenderLock&&) {
+void MangaBookmarksActivity::render(RenderLock&&) {
   renderer.clearScreen();
 
   const auto pageWidth = renderer.getScreenWidth();
@@ -183,15 +177,22 @@ void EpubReaderBookmarksActivity::render(RenderLock&&) {
     return bookmarks.at(confirmingDelete >= DELETE_MODE_DISPLAY ? selectorIndex : index).summary;
   };
   const auto getBookmarkSubtitle = [this](int index) {
-    auto bookmark = bookmarks.at(confirmingDelete >= DELETE_MODE_DISPLAY ? selectorIndex : index);
-    auto tocIndex = epub->getTocIndexForSpineIndex(bookmark.computedSpineIndex);
-    auto tocTitle = (tocIndex >= 0) ? (epub->getTocItem(tocIndex)).title : tr(STR_UNNAMED);
-    std::string subtitle = std::to_string((int)(std::clamp(bookmark.percentage, 0.0f, 1.0f) * 100.0f + 0.5f)) + "% - ";
-    if (bookmark.computedChapterPageCount > 0) {
-      subtitle += std::to_string(bookmark.computedChapterProgress + 1) + "/" +
-                  std::to_string(bookmark.computedChapterPageCount) + " - ";
+    const auto& bookmark = bookmarks.at(confirmingDelete >= DELETE_MODE_DISPLAY ? selectorIndex : index);
+    // Chapter title: last TOC entry whose page is at or before the bookmark's page.
+    std::string chapterTitle = tr(STR_UNNAMED);
+    for (const auto& entry : tocEntries) {
+      if (entry.pageIndex <= bookmark.computedChapterProgress) {
+        chapterTitle = entry.title;
+      } else {
+        break;
+      }
     }
-    return subtitle + tocTitle;
+    std::string subtitle = std::to_string(bookmark.computedChapterProgress + 1) + "/" +
+                           std::to_string(bookmark.computedChapterPageCount);
+    if (!tocEntries.empty()) {
+      subtitle += " - " + chapterTitle;
+    }
+    return subtitle;
   };
   const auto getBookmarkIcon = [isPortrait](int index) {
     // only enabled icon in portrait mode due to limitation with rotating icons for other orientations

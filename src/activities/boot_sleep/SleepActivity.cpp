@@ -16,6 +16,30 @@
 #include "images/Logo120.h"
 #include "images/MoonIcon.h"
 
+// Real hardware never reaches loop() while asleep: enterDeepSleep() ends by
+// calling powerManager.startDeepSleep(gpio), which is esp_deep_sleep_start()
+// on-device -- a no-return call, so wake only happens via a full chip reset
+// handled by main.cpp's boot routing. The emulator's startDeepSleep() is a
+// no-op (no real low-power state to enter), so execution falls through and
+// SleepActivity keeps running -- but with no loop() override, nothing could
+// ever exit it. This mirrors main.cpp's post-wake routing (resume the last
+// open book, or go home) so Confirm/Enter acts as a wake shortcut in the
+// emulator; it's unreachable on real hardware since loop() is never called
+// there while asleep.
+void SleepActivity::loop() {
+  if (!mappedInput.wasPressed(MappedInputManager::Button::Confirm)) return;
+
+  if (!APP_STATE.openEpubPath.empty() && APP_STATE.lastSleepFromReader) {
+    const auto path = APP_STATE.openEpubPath;
+    APP_STATE.openEpubPath = "";
+    APP_STATE.readerActivityLoadCount++;
+    APP_STATE.saveToFile();
+    activityManager.goToReader(path);
+  } else {
+    activityManager.goHome();
+  }
+}
+
 void SleepActivity::onEnter() {
   Activity::onEnter();
 
@@ -218,7 +242,15 @@ void SleepActivity::renderBitmapSleepScreen(const Bitmap& bitmap) const {
     renderer.invertScreen();
   }
 
-  renderer.displayBuffer(HalDisplay::HALF_REFRESH);
+  if (hasGreyscale) {
+    // OEM grayscale pipeline base: on X3 this displays the frame with the
+    // dedicated "AA-pre-BW(mid)" differential waveform, leaving every pixel
+    // in the calibrated state the gray nudge refresh expects; on X4 it is a
+    // plain HALF refresh (previous behavior).
+    renderer.displayGrayscaleBase(HalDisplay::HALF_REFRESH);
+  } else {
+    renderer.displayBuffer(HalDisplay::HALF_REFRESH);
+  }
 
   if (hasGreyscale) {
     bitmap.rewindToData();

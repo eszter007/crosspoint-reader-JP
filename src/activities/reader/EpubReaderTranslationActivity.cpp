@@ -269,8 +269,8 @@ void EpubReaderTranslationActivity::render(RenderLock&&) {
   const int contentTop = screen.y + metrics.topPadding + metrics.headerHeight + metrics.verticalSpacing;
   const int footerHeight = renderer.getLineHeight(SMALL_FONT_ID) + metrics.verticalSpacing;
   const int contentBottom = screen.y + screen.height - footerHeight;
-  const int maxWidth = screen.width - metrics.horizontalPadding * 2;
-  const int textX = screen.x + metrics.horizontalPadding;
+  const int maxWidth = screen.width - metrics.contentSidePadding * 2;
+  const int textX = screen.x + metrics.contentSidePadding;
 
   if (state == TRANSLATING) {
     UITheme::drawCenteredText(renderer, screen, UI_12_FONT_ID, screen.y + screen.height / 2, tr(STR_TRANSLATING), true);
@@ -298,7 +298,7 @@ void EpubReaderTranslationActivity::render(RenderLock&&) {
     if (maxScrollOffset > 0) {
       std::string scrollInfo =
           std::to_string(scrollOffset + 1) + "/" + std::to_string(maxScrollOffset + 1);
-      renderer.drawText(SMALL_FONT_ID, screen.x + screen.width - metrics.horizontalPadding - 40,
+      renderer.drawText(SMALL_FONT_ID, screen.x + screen.width - metrics.contentSidePadding - 40,
                         contentBottom + 2, scrollInfo.c_str(), true);
     }
 

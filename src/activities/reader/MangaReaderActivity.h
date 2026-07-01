@@ -6,6 +6,7 @@
 #include <string>
 #include <vector>
 
+#include "../../BookmarkEntry.h"
 #include "EpubReaderMenuActivity.h"
 #include "activities/Activity.h"
 #include "util/ButtonNavigator.h"
@@ -42,6 +43,12 @@ class MangaReaderActivity final : public Activity {
   unsigned long lastPageTurnTime = 0;
   unsigned long pageTurnDuration = 0;
 
+  bool currentPageBookmarked = false;
+  bool showBookmarkMessage = false;
+  bool bookmarkRemoved = false;  // true when last toggle removed (controls popup text)
+  unsigned long bookmarkMessageTime = 0UL;
+  std::vector<BookmarkEntry> cachedBookmarks;
+
   ButtonNavigator buttonNavigator;
 
   enum class ViewMode { FullPage, PanelZoom, TextOverlay };
@@ -59,6 +66,10 @@ class MangaReaderActivity final : public Activity {
 
   void saveProgress() const;
   void loadProgress();
+
+  void loadCachedBookmarks();
+  void updateBookmarkFlag();
+  void addBookmark();
 
   void launchWordLookup();
   void launchMenu();

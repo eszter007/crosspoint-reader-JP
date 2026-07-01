@@ -70,7 +70,7 @@ void KOReaderSyncActivity::saveProgressAndReturn(int spineIndex, int page) {
   // epub is guaranteed non-null here: ensureEpubLoaded() was called in performSync() before
   // SHOWING_RESULT state is entered, and this method is only called from that state.
   assert(epub);
-  if (!EpubReaderUtils::saveProgress(*epub, spineIndex, page, 0)) {
+  if (!EpubReaderUtils::saveProgress(*epub, spineIndex, page, 0, -1, -1)) {
     {
       RenderLock lock(*this);
       state = SYNC_FAILED;

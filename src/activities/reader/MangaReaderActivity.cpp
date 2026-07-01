@@ -8,6 +8,7 @@
 #include <GfxRenderer.h>
 #include <HalStorage.h>
 #include <I18n.h>
+#include <JsonSettingsIO.h>
 #include <Memory.h>
 
 #include <algorithm>
@@ -19,6 +20,7 @@
 #include "CrossPointState.h"
 #include "EpubReaderPercentSelectionActivity.h"
 #include "EpubReaderTranslationActivity.h"
+#include "MangaBookmarksActivity.h"
 #include "MangaChapterSelectionActivity.h"
 #include "MangaWordLookupActivity.h"
 #include "MappedInputManager.h"
@@ -29,6 +31,7 @@
 #include "RecentBooksStore.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
+#include "util/BookmarkUtil.h"
 #include "util/ScreenshotUtil.h"
 
 void MangaReaderActivity::onEnter() {
@@ -42,6 +45,8 @@ void MangaReaderActivity::onEnter() {
 
   ReaderUtils::applyOrientation(renderer, SETTINGS.orientation);
   loadProgress();
+  loadCachedBookmarks();
+  updateBookmarkFlag();
 
   APP_STATE.openEpubPath = book->getFolder();
   APP_STATE.saveToFile();
@@ -109,6 +114,7 @@ void MangaReaderActivity::loadCurrentPagePanels() {
   if (book && currentPage < book->getPageCount()) {
     panelsLoaded = book->loadPagePanels(currentPage, panels);
   }
+  updateBookmarkFlag();
 }
 
 void MangaReaderActivity::nextPanel() {
@@ -178,6 +184,11 @@ void MangaReaderActivity::toggleAutoPageTurn(const uint8_t selectedPageTurnOptio
 }
 
 void MangaReaderActivity::loop() {
+  if (showBookmarkMessage && (millis() - bookmarkMessageTime) >= ReaderUtils::BOOKMARK_MESSAGE_DURATION_MS) {
+    showBookmarkMessage = false;
+    requestUpdate();
+  }
+
   if (automaticPageTurnActive) {
     if (mappedInput.wasReleased(MappedInputManager::Button::Confirm) ||
         mappedInput.wasReleased(MappedInputManager::Button::Back)) {
@@ -301,6 +312,10 @@ void MangaReaderActivity::render(RenderLock&&) {
   if (pendingScreenshot) {
     pendingScreenshot = false;
     ScreenshotUtil::takeScreenshot(renderer);
+  }
+
+  if (showBookmarkMessage) {
+    GUI.drawPopup(renderer, bookmarkRemoved ? tr(STR_BOOKMARK_REMOVED) : tr(STR_BOOKMARK_ADDED));
   }
 }
 
@@ -690,6 +705,86 @@ void MangaReaderActivity::loadProgress() {
   }
 }
 
+void MangaReaderActivity::loadCachedBookmarks() {
+  cachedBookmarks.clear();
+  if (!book) {
+    currentPageBookmarked = false;
+    return;
+  }
+
+  const std::string bmPath = BookmarkUtil::getBookmarkPath(book->getFolder());
+  if (Storage.exists(bmPath.c_str())) {
+    String json = Storage.readFile(bmPath.c_str());
+    if (!json.isEmpty()) {
+      JsonSettingsIO::loadBookmarks(cachedBookmarks, json.c_str());
+    }
+  }
+}
+
+// Manga has a flat page index (no chapters/xpath like Epub), so bookmarks
+// reuse BookmarkEntry with computedSpineIndex fixed at 0 and
+// computedChapterPageCount/computedChapterProgress holding the book's total
+// page count / bookmarked page directly.
+void MangaReaderActivity::updateBookmarkFlag() {
+  if (!book || cachedBookmarks.empty()) {
+    currentPageBookmarked = false;
+    return;
+  }
+  const uint32_t pageCount = book->getPageCount();
+  currentPageBookmarked =
+      std::any_of(cachedBookmarks.begin(), cachedBookmarks.end(), [&](const BookmarkEntry& b) {
+        return b.computedSpineIndex == 0 && b.computedChapterPageCount == pageCount &&
+               b.computedChapterProgress == currentPage;
+      });
+}
+
+void MangaReaderActivity::addBookmark() {
+  if (!book) return;
+  const uint32_t pageCount = book->getPageCount();
+  if (pageCount == 0) return;
+
+  const size_t countBefore = cachedBookmarks.size();
+  cachedBookmarks.erase(std::remove_if(cachedBookmarks.begin(), cachedBookmarks.end(),
+                                       [&](const BookmarkEntry& b) {
+                                         return b.computedSpineIndex == 0 && b.computedChapterPageCount == pageCount &&
+                                                b.computedChapterProgress == currentPage;
+                                       }),
+                        cachedBookmarks.end());
+  if (cachedBookmarks.size() != countBefore) {
+    bookmarkRemoved = true;
+    currentPageBookmarked = false;
+  } else {
+    std::string pageText;
+    for (const auto& panel : panels) {
+      for (const auto& tb : panel.textBlocks) {
+        if (!pageText.empty()) pageText += '\n';
+        pageText += tb.text;
+      }
+    }
+    BookmarkEntry entry;
+    entry.percentage = static_cast<float>(currentPage) / static_cast<float>(pageCount);
+    if (pageText.empty()) {
+      char buf[32];
+      snprintf(buf, sizeof(buf), tr(STR_PAGE_NUMBER_FORMAT), currentPage + 1);
+      entry.summary = buf;
+    } else {
+      entry.summary = BookmarkUtil::sanitizeBookmarkSummary(pageText);
+    }
+    entry.computedSpineIndex = 0;
+    entry.computedChapterPageCount = static_cast<uint16_t>(std::min<uint32_t>(pageCount, 0xFFFF));
+    entry.computedChapterProgress = static_cast<uint16_t>(std::min<uint32_t>(currentPage, 0xFFFF));
+    cachedBookmarks.insert(cachedBookmarks.begin(), entry);
+    bookmarkRemoved = false;
+    currentPageBookmarked = true;
+  }
+
+  const std::string path = BookmarkUtil::getBookmarkPath(book->getFolder());
+  Storage.mkdir(BookmarkUtil::getBookmarksDir().c_str());
+  if (!JsonSettingsIO::saveBookmarks(cachedBookmarks, path.c_str())) {
+    LOG_ERR("MNG", "Failed to save bookmarks to: %s", path.c_str());
+  }
+}
+
 void MangaReaderActivity::launchMenu() {
   if (!book) return;
 
@@ -718,9 +813,10 @@ void MangaReaderActivity::launchMenu() {
   startActivityForResult(
       std::make_unique<EpubReaderMenuActivity>(renderer, mappedInput, book->getTitle(), curPage, totalPages,
                                                bookProgressPercent, SETTINGS.orientation,
-                                               /*hasFootnotes=*/false, /*hasWordLookup=*/hasWordLookup,
-                                               /*showVerticalToggle=*/false, /*verticalEnabled=*/false,
-                                               /*furiganaEnabled=*/true, /*hasPageText=*/hasPageText),
+                                               /*hasFootnotes=*/false, /*hasBookmarks=*/!cachedBookmarks.empty(),
+                                               /*hasWordLookup=*/hasWordLookup, /*showVerticalToggle=*/false,
+                                               /*verticalEnabled=*/false, /*furiganaEnabled=*/true,
+                                               /*hasPageText=*/hasPageText),
       [this](const ActivityResult& result) {
         const auto& menu = std::get<MenuResult>(result.data);
         // Apply orientation change
@@ -852,9 +948,30 @@ void MangaReaderActivity::onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction
       }
       break;
     }
-    case EpubReaderMenuActivity::MenuAction::BOOKMARKS:
-      // TODO: manga-specific bookmark system (needs page-based storage, not spine-based)
+    case EpubReaderMenuActivity::MenuAction::BOOKMARKS: {
+      if (!book) break;
+      startActivityForResult(
+          std::make_unique<MangaBookmarksActivity>(renderer, mappedInput, book->getFolder(), book->getToc()),
+          [this](const ActivityResult& result) {
+            if (!result.isCancelled && book) {
+              const uint32_t targetPage = std::get<PageResult>(result.data).page;
+              if (targetPage < book->getPageCount()) {
+                currentPage = targetPage;
+                currentPanel = -1;
+                viewMode = ViewMode::FullPage;
+                loadCurrentPagePanels();
+              }
+            }
+            requestUpdate();
+          });
+      return;
+    }
+    case EpubReaderMenuActivity::MenuAction::TOGGLE_BOOKMARK: {
+      addBookmark();
+      showBookmarkMessage = true;
+      bookmarkMessageTime = millis();
       break;
+    }
     case EpubReaderMenuActivity::MenuAction::ROTATE_SCREEN:
       // Orientation already applied in the callback above
       break;
