@@ -53,12 +53,15 @@ Reading aids rendered above (horizontal) or beside (vertical) kanji, with positi
 
 Read manga with real panel detection, dictionary lookup, and pre-extracted translations. A conversion tool (`tools/manga_convert/`) detects actual panel rectangles with a YOLO model trained on Manga109, asks Gemini what text appears in each panel (plus an English translation), and packs everything into a compact binary format the device reads natively. Page images (JPG/PNG) are used directly — no BMP conversion needed.
 
-- **Full-page view** — Displays the manga page scaled to screen with panel highlight rectangles
-- **Panel-by-panel zoom** — Navigate panels in reading order with page turn buttons. Each panel is scaled to fill the screen.
+- **Full-page view** — Displays the manga page scaled to screen with panel highlight rectangles. When the reading orientation is landscape, a page whose aspect doesn't match the screen rotates to fill it edge-to-edge instead of shrinking into a small centered box (same behavior panel-zoom already had).
+- **Panel-by-panel zoom** — Navigate panels in reading order with page turn buttons. Each panel is scaled to fill the screen, rotating to landscape when that fills more of the screen than portrait would.
 - **Text overlay** — View OCR'd Japanese text from the current panel, word-wrapped with the reader font
 - **Word lookup** — Press Confirm on a zoomed panel (or in full-page view, for the whole page) to open dictionary lookup. Same dictionary, deinflection, and grammar features as EPUB word lookup.
 - **Translate Page** — Shows the translation extracted at conversion time instantly, no network call needed. Falls back to a live Gemini call if no translation was pre-extracted for that panel.
-- **Progress saving** — Current page and panel position saved automatically
+- **Progress saving** — Current page and panel position saved automatically. Reaching the last page marks the manga finished in Insights, same as EPUBs.
+- **Title and author** — Read from a `meta.bin` file the converter writes alongside the panel data (auto-detected from the source EPUB/CBZ/PDF, or set explicitly with `--title`/`--author`). Shown in the Library, on shelves, and on the Home screen's Continue Reading card, just like EPUB metadata.
+- **Cover and progress in the Library** — The first page is used as the cover thumbnail everywhere (Library grid, shelf list, Home). Progress is shown as a percentage below the cover, the same as EPUBs.
+- **Found anywhere on the card** — The Library scans every folder on the SD card, at any nesting depth, for a `panels.idx` file — a manga folder doesn't need to sit directly under a folder named "manga" or live only one level deep.
 
 ### Image Handling
 
@@ -76,10 +79,14 @@ Read manga with real panel detection, dictionary lookup, and pre-extracted trans
 
 The home menu's **Library** has two tabs:
 
-- **Books** — All books on the SD card as a 3-column cover grid, sorted by recency (recently opened first, then alphabetical). Covers and titles are auto-generated from EPUB metadata on first visit. A peek row hints at more content below the button bar.
+- **Books** — All books on the SD card as a 3-column cover grid, sorted by recency (recently opened first, then alphabetical). Covers and titles are auto-generated from EPUB metadata on first visit; manga covers use the first page image and title/author from `meta.bin`. A peek row hints at more content below the button bar. The scan walks every folder on the card, at any depth, so books and manga don't need to sit at the SD card root or one level down.
 - **Shelves** — Folders on the SD card that contain books, shown as a list with a cover thumbnail, folder name, book count, and a chevron. Tap a shelf to see all books in that folder as a cover grid with progress.
 
 Tab switching uses the same pattern as Settings: Confirm cycles tabs when the tab row is focused, hold Up/Down to switch tabs from anywhere.
+
+### File Browser
+
+Browsing shows every file on the SD card, not just supported formats — files CrossPoint can't open (unsupported extensions) are still listed, grayed out, so nothing on the card is hidden from view. Opening a folder that contains a `panels.idx` (a converted manga) launches the manga reader directly, regardless of where that folder lives.
 
 ### Insights
 
@@ -93,7 +100,7 @@ The home menu shows an **Insights** entry (between File Transfer and Settings) t
   - Longest streak
 - **Monthly calendar** — navigate months with Left/Right buttons. Days you read are shown as filled black circles. Today is shown with an outline circle. A "X days read" subtitle summarizes each month.
 
-Reading time is recorded automatically when you close a book (minimum 1 minute to count). Books finished are counted once per book (no double-counting on re-open). Stats persist in `/system/reading_stats.bin` on the SD card root — unaffected by cache clears or firmware updates.
+Reading time is recorded automatically when you close a book (minimum 1 minute to count). Manga counts toward "books finished" the same as EPUBs — reaching the last page marks it, independent of session length. Books finished are counted once per book (no double-counting on re-open). Stats persist in `/system/reading_stats.bin` on the SD card root — unaffected by cache clears or firmware updates.
 
 ### Font Selection
 
@@ -216,13 +223,14 @@ The position counter (e.g. 10/35) appears in the header. Words are pre-scanned s
 
 ### Reading Manga
 
-1. Prepare your manga using `tools/manga_convert/convert_manga.py` (see below)
-2. Copy the output folder to the SD card — it contains page images plus `panels.idx` and `panels.dat`
-3. Open the folder from the file browser, or from the Library (manga appears in the book grid automatically)
+1. Prepare your manga using `tools/manga_convert/convert_manga.py` (see below). Pass `--title`/`--author` if you want to set them explicitly — otherwise the converter auto-detects them from the source file's own metadata.
+2. Copy the output folder anywhere on the SD card — it contains page images plus `panels.idx`, `panels.dat`, and `meta.bin`. No specific parent folder name or nesting depth is required; the Library finds it automatically.
+3. Open the folder from the file browser, or from the Library (manga appears in the book grid, on shelves, and in Continue Reading automatically, with its cover, title, author, and progress percentage)
 4. **Page turn buttons** — In full-page view, enters panel zoom on the first panel. In panel zoom, cycles through panels then advances to the next page.
 5. **Back** — Returns from panel zoom to full-page view, or from full-page to the file browser
 6. **Confirm** — In full-page view, opens the reader menu (Word Lookup, Translate Page, Go to %, Bookmarks, etc.). In panel zoom, opens word lookup directly for the current panel's text.
 7. Long-press **Back** — Jump to the file browser from anywhere
+8. Reaching the last page marks the manga finished in the Insights tab, the same as an EPUB.
 
 ### Toggling Vertical Text
 
@@ -299,6 +307,7 @@ python3 tools/manga_convert/convert_manga.py \
 - `--no-ocr` — skip the Gemini calls entirely; panel boxes only, no text/translation/lookup data
 - `--max-pages N` — only process the first N pages, useful for a quick test before running the full (potentially expensive) batch
 - `--gemini-key-file FILE` — read the API key from a file instead of `GEMINI_API_KEY`
+- `--title TITLE` / `--author AUTHOR` — override the book's title/author. When omitted, the converter auto-detects them from the source: EPUB `dc:title`/`dc:creator`, CBZ `ComicInfo.xml`, or PDF document metadata. If nothing is found and these flags aren't passed, the device falls back to the folder name with no author shown.
 
 The Gemini API key is never embedded in the script — pass it via `--gemini-key-file` or the environment at runtime.
 
@@ -314,9 +323,10 @@ The Gemini API key is never embedded in the script — pass it via `--gemini-key
   ...
   panels.idx        # Panel index (binary, auto-generated)
   panels.dat        # Panel boxes, OCR text, and translations (binary, auto-generated)
+  meta.bin          # Title + author (binary, auto-generated when detected)
 ```
 
-The device detects any folder containing `panels.idx` as a manga book.
+The device detects any folder containing `panels.idx` as a manga book — anywhere on the SD card, at any folder depth. There's no requirement to place it under a folder literally named `manga`; the example path above is just a suggested convention.
 
 ---
 
