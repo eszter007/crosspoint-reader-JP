@@ -99,13 +99,16 @@ EpdFontFamily notosans18FontFamily(&notosans18RegularFont, &notosans18BoldFont, 
 EpdFont smallFont(&notosans_8_regular);
 EpdFontFamily smallFontFamily(&smallFont);
 
-EpdFont cjk10RegularFont(&notosanscjk_10_regular);
-EpdFont cjk10BoldFont(&notosanscjk_10_bold);
-EpdFontFamily cjk10FontFamily(&cjk10RegularFont, &cjk10BoldFont);
+// Curated Joyo-kanji + kana + CJK punctuation subset (not the full CJK Unified
+// Ideographs block) -- see docs for why: the full block doesn't fit in flash
+// alongside everything else. No bold variant; EpdFontFamily::getFont() falls
+// back to regular when bold is null, which is fine for an occasional-use
+// fallback font.
+EpdFont cjk10RegularFont(&notosansjp_joyo_10_regular);
+EpdFontFamily cjk10FontFamily(&cjk10RegularFont);
 
-EpdFont cjk12RegularFont(&notosanscjk_12_regular);
-EpdFont cjk12BoldFont(&notosanscjk_12_bold);
-EpdFontFamily cjk12FontFamily(&cjk12RegularFont, &cjk12BoldFont);
+EpdFont cjk12RegularFont(&notosansjp_joyo_12_regular);
+EpdFontFamily cjk12FontFamily(&cjk12RegularFont);
 
 EpdFont ui10RegularFont(&ubuntu_10_regular);
 EpdFont ui10BoldFont(&ubuntu_10_bold);

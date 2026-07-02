@@ -37,7 +37,5 @@
 #include <builtinFonts/ubuntu_10_regular.h>
 #include <builtinFonts/ubuntu_12_bold.h>
 #include <builtinFonts/ubuntu_12_regular.h>
-#include <builtinFonts/notosanscjk_10_regular.h>
-#include <builtinFonts/notosanscjk_10_bold.h>
-#include <builtinFonts/notosanscjk_12_regular.h>
-#include <builtinFonts/notosanscjk_12_bold.h>
+#include <builtinFonts/notosansjp_joyo_10_regular.h>
+#include <builtinFonts/notosansjp_joyo_12_regular.h>

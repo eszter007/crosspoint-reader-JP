@@ -44,8 +44,21 @@ int firstDowOfMonth(uint16_t y, uint8_t m) {
   return (dow + 6) % 7;  // convert to ISO Mon=0
 }
 
-static const char* MONTH_NAMES[] = {"", "January", "February", "March", "April", "May", "June",
-                                     "July", "August", "September", "October", "November", "December"};
+// tr() reads from the I18N singleton, so these must be resolved at call time
+// (not static-initialized at namespace scope, before I18N is guaranteed ready).
+const char* monthName(int month) {
+  static constexpr StrId ids[] = {StrId::STR_MONTH_JAN, StrId::STR_MONTH_FEB, StrId::STR_MONTH_MAR,
+                                  StrId::STR_MONTH_APR, StrId::STR_MONTH_MAY, StrId::STR_MONTH_JUN,
+                                  StrId::STR_MONTH_JUL, StrId::STR_MONTH_AUG, StrId::STR_MONTH_SEP,
+                                  StrId::STR_MONTH_OCT, StrId::STR_MONTH_NOV, StrId::STR_MONTH_DEC};
+  return I18n::getInstance().get(ids[month - 1]);
+}
+
+const char* dayLabel(int dow) {
+  static constexpr StrId ids[] = {StrId::STR_DAY_MON, StrId::STR_DAY_TUE, StrId::STR_DAY_WED, StrId::STR_DAY_THU,
+                                  StrId::STR_DAY_FRI, StrId::STR_DAY_SAT, StrId::STR_DAY_SUN};
+  return I18n::getInstance().get(ids[dow]);
+}
 }  // namespace
 
 void ReadingStatsActivity::onEnter() {
@@ -131,7 +144,7 @@ void ReadingStatsActivity::render(RenderLock&&) {
 
   // Flame + streak
   char streakBuf[32];
-  snprintf(streakBuf, sizeof(streakBuf), "%d day streak", streak);
+  snprintf(streakBuf, sizeof(streakBuf), tr(STR_STREAK_FORMAT), streak);
   const int streakTextW = renderer.getTextWidth(UI_12_FONT_ID, streakBuf, EpdFontFamily::BOLD);
   const int row1TotalW = iconSize + 8 + streakTextW;
   const int row1X = cardX + (cardW - row1TotalW) / 2;
@@ -142,7 +155,8 @@ void ReadingStatsActivity::render(RenderLock&&) {
 
   // Minutes this week
   char weekBuf[48];
-  snprintf(weekBuf, sizeof(weekBuf), "%d %s read this week", weekMinutes, weekMinutes == 1 ? "minute" : "minutes");
+  snprintf(weekBuf, sizeof(weekBuf), tr(STR_WEEK_MINUTES_READ_FORMAT), weekMinutes,
+          weekMinutes == 1 ? tr(STR_MINUTE) : tr(STR_MINUTES));
   const int weekTextW = renderer.getTextWidth(SMALL_FONT_ID, weekBuf);
   const int row2Y = row1Y + iconSize + 4;
   renderer.drawText(SMALL_FONT_ID, cardX + (cardW - weekTextW) / 2, row2Y, weekBuf, true);
@@ -152,7 +166,6 @@ void ReadingStatsActivity::render(RenderLock&&) {
   renderer.drawLine(cardX + cardPad, sepY, cardX + cardW - cardPad, sepY, true);
 
   // Day labels + circles (Mon-Sun)
-  static const char* dayLabels[] = {"Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"};
   const int daySpacing = (cardW - 2 * cardPad) / 7;
   const int labelsY = sepY + 12;
   const int circlesY = labelsY + smallLH + 6;
@@ -160,9 +173,10 @@ void ReadingStatsActivity::render(RenderLock&&) {
   for (int i = 0; i < 7; i++) {
     const int cx = cardX + cardPad + daySpacing / 2 + i * daySpacing;
     const bool isToday = (i == today.dow);
-    const int labelW = renderer.getTextWidth(SMALL_FONT_ID, dayLabels[i],
+    const char* label = dayLabel(i);
+    const int labelW = renderer.getTextWidth(SMALL_FONT_ID, label,
                                               isToday ? EpdFontFamily::BOLD : EpdFontFamily::REGULAR);
-    renderer.drawText(SMALL_FONT_ID, cx - labelW / 2, labelsY, dayLabels[i], true,
+    renderer.drawText(SMALL_FONT_ID, cx - labelW / 2, labelsY, label, true,
                       isToday ? EpdFontFamily::BOLD : EpdFontFamily::REGULAR);
     const int ix = cx - circleSize / 2;
     if (weekDays[i]) {
@@ -199,10 +213,10 @@ void ReadingStatsActivity::render(RenderLock&&) {
   snprintf(streakLBuf, sizeof(streakLBuf), "%d", longestStreak);
 
   StatCard cards[4] = {
-    {booksBuf, "Books finished", BookOpenIcon24},
-    {daysBuf, "Days read", CalendarIcon24},
-    {timeBuf, "Total reading time", ClockIcon24},
-    {streakLBuf, "Longest streak", FlameIcon},
+    {booksBuf, tr(STR_STAT_BOOKS_FINISHED), BookOpenIcon24},
+    {daysBuf, tr(STR_STAT_DAYS_READ), CalendarIcon24},
+    {timeBuf, tr(STR_STAT_TOTAL_TIME), ClockIcon24},
+    {streakLBuf, tr(STR_STAT_LONGEST_STREAK), FlameIcon},
   };
 
   for (int i = 0; i < 4; i++) {
@@ -241,7 +255,7 @@ void ReadingStatsActivity::render(RenderLock&&) {
 
   // Month/year header with chevrons — same font as streak
   char monthBuf[32];
-  snprintf(monthBuf, sizeof(monthBuf), "%s %d", MONTH_NAMES[calMonth], calYear);
+  snprintf(monthBuf, sizeof(monthBuf), "%s %d", monthName(calMonth), calYear);
   const int monthW = renderer.getTextWidth(UI_12_FONT_ID, monthBuf, EpdFontFamily::BOLD);
   const int monthX = cardX + (cardW - monthW) / 2;
   const int monthY = y + 12;
@@ -265,17 +279,17 @@ void ReadingStatsActivity::render(RenderLock&&) {
   // Days read count
   const int daysReadMonth = READING_STATS.getDaysReadInMonth(calYear, calMonth);
   char daysReadBuf[32];
-  snprintf(daysReadBuf, sizeof(daysReadBuf), "%d days read", daysReadMonth);
+  snprintf(daysReadBuf, sizeof(daysReadBuf), tr(STR_DAYS_READ_IN_MONTH_FORMAT), daysReadMonth);
   const int drW = renderer.getTextWidth(SMALL_FONT_ID, daysReadBuf);
   renderer.drawText(SMALL_FONT_ID, cardX + (cardW - drW) / 2, monthY + calTitleH + 2, daysReadBuf, true);
 
   // Day-of-week headers
-  static const char* calDayLabels[] = {"Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"};
   const int headerY = monthY + calTitleH + calSubH + 12;
   for (int i = 0; i < 7; i++) {
     const int cx = cardX + cardPad + i * cellSize + cellSize / 2;
-    const int lw = renderer.getTextWidth(SMALL_FONT_ID, calDayLabels[i]);
-    renderer.drawText(SMALL_FONT_ID, cx - lw / 2, headerY, calDayLabels[i], true);
+    const char* label = dayLabel(i);
+    const int lw = renderer.getTextWidth(SMALL_FONT_ID, label);
+    renderer.drawText(SMALL_FONT_ID, cx - lw / 2, headerY, label, true);
   }
 
   // Calendar grid
