@@ -525,7 +525,7 @@ void MangaReaderActivity::renderPanelZoom() {
   // "Panels" hint — always shown in panel-zoom, indicates this mode and
   // that Confirm opens the full reader menu (with Word Lookup, Translate, etc.)
   {
-    const char* hint = "Panels";
+    const char* hint = tr(STR_PANELS_MODE_HINT);
     renderer.fillRect(2, statusY - 1, renderer.getTextWidth(SMALL_FONT_ID, hint) + 4,
                       renderer.getLineHeight(SMALL_FONT_ID) + 2, false);
     renderer.drawText(SMALL_FONT_ID, 4, statusY, hint, true);
@@ -574,7 +574,7 @@ void MangaReaderActivity::renderTextOverlay() {
 
   // Header
   char headerBuf[32];
-  snprintf(headerBuf, sizeof(headerBuf), "Panel %d/%d", currentPanel + 1, (int)panels.size());
+  snprintf(headerBuf, sizeof(headerBuf), tr(STR_PANEL_NUMBER_FORMAT), currentPanel + 1, (int)panels.size());
   renderer.drawText(UI_12_FONT_ID, screen.x + metrics.contentSidePadding, textY, headerBuf, true,
                     EpdFontFamily::BOLD);
   textY += renderer.getLineHeight(UI_12_FONT_ID) + metrics.verticalSpacing;

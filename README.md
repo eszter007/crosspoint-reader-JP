@@ -5,6 +5,13 @@ A fork of [CrossPoint](https://github.com/crosspoint-reader/crosspoint-reader) e
 This fork is fully compatible with upstream CrossPoint and can be flashed onto any supported Xteink X4 device.
 It can be tested in an emulator before flashing: https://github.com/eszter007/Crosspoint-Emulator
 
+<p align="center">
+  <img src="docs/images/screenshots/vertical-text-furigana.png" width="200" alt="Vertical Japanese text with furigana">
+  <img src="docs/images/screenshots/word-lookup.png" width="200" alt="Dictionary word lookup">
+  <img src="docs/images/screenshots/manga-full-page.png" width="200" alt="Manga reader with panel detection">
+  <img src="docs/images/screenshots/reader-menu.png" width="200" alt="Reader menu">
+</p>
+
 ---
 
 ## What's Different from Upstream CrossPoint
@@ -19,6 +26,12 @@ Japanese books are automatically detected from EPUB metadata (`<dc:language>ja</
 - Font-adaptive punctuation, bracket, and dash positioning (works with UDDigiKyokasho, Noto Serif, Noto Sans)
 - Bold, italic, and emphasis marks (sesame dots ﹅)
 - A per-book "Vertical Text: ON/OFF" toggle in the reader menu to override auto-detection (persists across reopens)
+
+<p align="center">
+  <img src="docs/images/screenshots/vertical-text-furigana.png" width="260" alt="Vertical text with furigana">
+  <img src="docs/images/screenshots/horizontal-text.png" width="260" alt="Same book with vertical text toggled off">
+</p>
+<p align="center"><em>Same book, "Vertical Text" toggled on (left) vs. off (right)</em></p>
 
 ### Dictionary & Word Lookup
 
@@ -41,13 +54,25 @@ Open the reader menu and select **Word Lookup** to look up any word on the curre
 - **Multiple readings** — Kanji with multiple dictionary entries show all readings sorted by frequency
 - **Scrollable definitions** — Long entries scroll with Up/Down. Word navigation with Left/Right
 
+<p align="center"><img src="docs/images/screenshots/word-lookup.png" width="260" alt="Word lookup showing definition, reading, and example sentence"></p>
+
 ### Page Translation
 
 Select **Translate Page** from the reader menu to translate the current page from Japanese to English via Google's Gemini 2.5 Flash API. Available for all books (not just Japanese). Requires a Gemini API key on the SD card.
 
+<p align="center"><img src="docs/images/screenshots/translate-page.png" width="260" alt="Translated page"></p>
+
 ### Furigana (Ruby Text)
 
 Reading aids rendered above (horizontal) or beside (vertical) kanji, with positioning adjustments so dense furigana doesn't overlap base characters. Can be toggled on/off per-book from the reader menu.
+
+### Localization
+
+All UI chrome this fork adds — menu items and toggles (Word Lookup, Translate Page, Vertical Text, Furigana, Bookmarks/Toggle Bookmark, manga's Panels indicator), popups, and the bookmarks list screens (both EPUB and manga) — goes through the same `tr()`/i18n system as the rest of CrossPoint, so it follows the device's language setting. Every supported language currently has a translation for these strings (initially machine-translated for the languages that hadn't caught up yet) — corrections are welcome via PR, same as any other string in `lib/I18n/translations/` (see [translators.md](docs/translators.md)). Any string a future PR doesn't cover falls back to English automatically.
+
+Two features are intentionally **English-only regardless of device language**, since they're producing English *content*, not displaying translatable UI text:
+- **Dictionary Word Lookup** — definitions, part-of-speech, and grammar notes come from the underlying JMdict-based dictionary data, which is English-language by design.
+- **Page Translation** — the Gemini-powered translation always targets English (Japanese → English), both for EPUB "Translate Page" and manga's pre-extracted panel translations.
 
 ### Manga Panel Reader
 
@@ -63,6 +88,14 @@ Read manga with real panel detection, dictionary lookup, and pre-extracted trans
 - **Title and author** — Read from a `meta.bin` file the converter writes alongside the panel data (auto-detected from the source EPUB/CBZ/PDF, or set explicitly with `--title`/`--author`). Shown in the Library, on shelves, and on the Home screen's Continue Reading card, just like EPUB metadata.
 - **Cover and progress in the Library** — The first page is used as the cover thumbnail everywhere (Library grid, shelf list, Home). Progress is shown as a percentage below the cover, the same as EPUBs.
 - **Found anywhere on the card** — The Library scans every folder on the SD card, at any nesting depth, for a `panels.idx` file — a manga folder doesn't need to sit directly under a folder named "manga" or live only one level deep.
+
+<p align="center">
+  <img src="docs/images/screenshots/manga-full-page.png" width="260" alt="Manga full-page view with panel highlights">
+  <img src="docs/images/screenshots/manga-panel-zoom.png" width="260" alt="Manga panel-zoom view">
+</p>
+<p align="center"><em>Full-page view with panel highlights (left), panel-zoom on a single panel (right)</em></p>
+
+<p align="center"><img src="docs/images/screenshots/library.png" width="260" alt="Library showing manga and Epub covers side by side"></p>
 
 ### Image Handling
 
@@ -343,6 +376,7 @@ Key integration points:
 - `src/activities/reader/EpubReaderTranslationActivity.*` — Translation UI (new activity)
 - `src/activities/reader/MangaReaderActivity.*` — Manga panel reader (new activity)
 - `src/activities/reader/MangaWordLookupActivity.*` — Manga word lookup (new activity)
+- `src/activities/reader/MangaBookmarksActivity.*` — Manga bookmarks list (new activity)
 - `src/activities/reader/EpubReaderActivity.cpp` — Auto-detection and menu wiring (minimal changes to existing code)
 - `src/activities/reader/ReaderActivity.cpp` — Manga folder routing (minimal changes)
 - `src/activities/home/FileBrowserActivity.cpp` — Manga folder detection (minimal changes)

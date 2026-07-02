@@ -155,11 +155,13 @@ int jpegDrawCallback(JPEGDRAW* pDraw) {
   // Pre-clamp destination ranges to screen bounds (eliminates per-pixel screen checks)
   int clampYMax = ctx->dstHeight;
   if (ctx->screenHeight - cfgY < clampYMax) clampYMax = ctx->screenHeight - cfgY;
+  if (ctx->config->cropHeight > 0 && ctx->config->cropHeight < clampYMax) clampYMax = ctx->config->cropHeight;
   if (dstYStart < -cfgY) dstYStart = -cfgY;
   if (dstYEnd > clampYMax) dstYEnd = clampYMax;
 
   int clampXMax = ctx->dstWidth;
   if (ctx->screenWidth - cfgX < clampXMax) clampXMax = ctx->screenWidth - cfgX;
+  if (ctx->config->cropWidth > 0 && ctx->config->cropWidth < clampXMax) clampXMax = ctx->config->cropWidth;
   if (dstXStart < -cfgX) dstXStart = -cfgX;
   if (dstXEnd > clampXMax) dstXEnd = clampXMax;
 
@@ -435,6 +437,15 @@ bool JpegToFramebufferConverter::decodeToFramebuffer(const std::string& imagePat
     destWidth = config.maxWidth;
     destHeight = config.maxHeight;
     targetScale = (float)destWidth / srcWidth;
+  } else if (config.fillCrop && config.maxWidth > 0 && config.maxHeight > 0) {
+    // Aspect-fill: scale by whichever axis needs LESS shrinkage (may upscale),
+    // so the box is fully covered and the other axis overflows for cropping.
+    float scaleX = (float)config.maxWidth / srcWidth;
+    float scaleY = (float)config.maxHeight / srcHeight;
+    targetScale = (scaleX > scaleY) ? scaleX : scaleY;
+
+    destWidth = (int)(srcWidth * targetScale + 0.5f);
+    destHeight = (int)(srcHeight * targetScale + 0.5f);
   } else {
     float scaleX = (config.maxWidth > 0 && srcWidth > config.maxWidth) ? (float)config.maxWidth / srcWidth : 1.0f;
     float scaleY = (config.maxHeight > 0 && srcHeight > config.maxHeight) ? (float)config.maxHeight / srcHeight : 1.0f;

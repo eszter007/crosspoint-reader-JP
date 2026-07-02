@@ -682,6 +682,12 @@ void RecentBooksActivity::renderBooksTab(int contentTop, int contentHeight) {
               config.maxHeight = coverHeight;
               config.useGrayscale = false;
               config.useDithering = true;
+              // Manga covers are raw page images (not pre-cropped like Epub
+              // BMP thumbnails below) -- fill the cell and crop the overflow
+              // (bottom-cropped, top stays put) instead of letterboxing.
+              config.fillCrop = true;
+              config.cropWidth = coverWidth;
+              config.cropHeight = coverHeight;
               if (decoder->decodeToFramebuffer(coverPath, renderer, config)) {
                 hasCover = true;
               }
@@ -902,6 +908,12 @@ void RecentBooksActivity::renderShelfBooksView(int contentTop, int contentHeight
               config.maxHeight = coverHeight;
               config.useGrayscale = false;
               config.useDithering = true;
+              // Manga covers are raw page images (not pre-cropped like Epub
+              // BMP thumbnails below) -- fill the cell and crop the overflow
+              // (bottom-cropped, top stays put) instead of letterboxing.
+              config.fillCrop = true;
+              config.cropWidth = coverWidth;
+              config.cropHeight = coverHeight;
               if (decoder->decodeToFramebuffer(coverPath, renderer, config)) {
                 hasCover = true;
               }

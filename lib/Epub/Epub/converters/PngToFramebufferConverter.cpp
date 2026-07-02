@@ -181,6 +181,7 @@ int pngDrawCallback(PNGDRAW* pDraw) {
 
   // Check bounds
   if (dstY >= ctx->dstHeight) return 1;
+  if (ctx->config->cropHeight > 0 && dstY >= ctx->config->cropHeight) return 1;
 
   int outY = ctx->config->y + dstY;
   if (outY >= ctx->screenHeight) return 1;
@@ -189,8 +190,11 @@ int pngDrawCallback(PNGDRAW* pDraw) {
   convertLineToGray(pDraw->pPixels, ctx->grayLineBuffer, srcWidth, pDraw->iPixelType, pDraw->pPalette,
                     pDraw->iHasAlpha);
 
-  // Render scaled row using Bresenham-style integer stepping (no floating-point division)
+  // Render scaled row using Bresenham-style integer stepping (no floating-point division).
+  // dstWidth is also the ratio denominator below (error >= dstWidth) -- must stay the true,
+  // uncropped width. loopWidth is the (possibly smaller) crop bound for the pixel-write loop.
   int dstWidth = ctx->dstWidth;
+  int loopWidth = (ctx->config->cropWidth > 0 && ctx->config->cropWidth < dstWidth) ? ctx->config->cropWidth : dstWidth;
   int outXBase = ctx->config->x;
   int screenWidth = ctx->screenWidth;
   bool useDithering = ctx->config->useDithering;
@@ -219,7 +223,7 @@ int pngDrawCallback(PNGDRAW* pDraw) {
   int srcX = 0;
   int error = 0;
 
-  for (int dstX = 0; dstX < dstWidth; dstX++) {
+  for (int dstX = 0; dstX < loopWidth; dstX++) {
     int outX = outXBase + dstX;
     if (outX < screenWidth) {
       uint8_t gray = ctx->grayLineBuffer[srcX];
@@ -320,6 +324,15 @@ bool PngToFramebufferConverter::decodeToFramebuffer(const std::string& imagePath
     ctx.dstWidth = config.maxWidth;
     ctx.dstHeight = config.maxHeight;
     ctx.scale = (float)ctx.dstWidth / ctx.srcWidth;
+  } else if (config.fillCrop && config.maxWidth > 0 && config.maxHeight > 0) {
+    // Aspect-fill: scale by whichever axis needs LESS shrinkage (may upscale),
+    // so the box is fully covered and the other axis overflows for cropping.
+    float scaleX = (float)config.maxWidth / ctx.srcWidth;
+    float scaleY = (float)config.maxHeight / ctx.srcHeight;
+    ctx.scale = (scaleX > scaleY) ? scaleX : scaleY;
+
+    ctx.dstWidth = (int)(ctx.srcWidth * ctx.scale + 0.5f);
+    ctx.dstHeight = (int)(ctx.srcHeight * ctx.scale + 0.5f);
   } else {
     // Calculate scale factor to fit within maxWidth/maxHeight
     float scaleX = (float)config.maxWidth / ctx.srcWidth;

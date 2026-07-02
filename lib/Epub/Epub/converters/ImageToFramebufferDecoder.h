@@ -19,6 +19,15 @@ struct RenderConfig {
   bool performanceMode = false;
   bool useExactDimensions = false;  // If true, use maxWidth/maxHeight as exact output size (no recalculation)
   std::string cachePath;            // If non-empty, decoder will write pixel cache to this path
+
+  // Aspect-fill ("cover") mode: scale by max(scaleX, scaleY) instead of
+  // min(scaleX, scaleY), so the image fills maxWidth x maxHeight completely
+  // (may upscale) instead of fitting inside it with letterbox space. Pair
+  // with cropWidth/cropHeight to clip the overflowing dimension -- output is
+  // top-left anchored, so only the bottom/right get cropped.
+  bool fillCrop = false;
+  int cropWidth = 0;   // If >0, clip final output width to this value
+  int cropHeight = 0;  // If >0, clip final output height to this value
 };
 
 class ImageToFramebufferDecoder {
