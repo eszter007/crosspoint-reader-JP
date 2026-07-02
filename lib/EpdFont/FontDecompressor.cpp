@@ -33,8 +33,9 @@ void FontDecompressor::freePageBuffer() {
 }
 
 void FontDecompressor::freeHotGroup() {
-  hotGroup.clear();
-  hotGroup.shrink_to_fit();
+  free(hotGroup);
+  hotGroup = nullptr;
+  hotGroupCapacity = 0;
   hotGroupFont = nullptr;
   hotGroupIndex = UINT16_MAX;
   hotGlyphBuf.clear();
@@ -170,12 +171,16 @@ const uint8_t* FontDecompressor::getBitmap(const EpdFontData* fontData, const Ep
   }
 
   // Check if hot group already has this group decompressed — if not, decompress it
-  if (!(!hotGroup.empty() && hotGroupFont == fontData && hotGroupIndex == groupIndex)) {
+  if (!(hotGroup != nullptr && hotGroupFont == fontData && hotGroupIndex == groupIndex)) {
     stats.cacheMisses++;
     const EpdFontGroup& group = fontData->groups[groupIndex];
 
-    hotGroup.resize(group.uncompressedSize);
-    if (hotGroup.empty()) {
+    if (hotGroupCapacity < group.uncompressedSize) {
+      free(hotGroup);
+      hotGroup = static_cast<uint8_t*>(malloc(group.uncompressedSize));
+      hotGroupCapacity = hotGroup ? group.uncompressedSize : 0;
+    }
+    if (!hotGroup) {
       LOG_ERR("FDC", "Failed to allocate %u bytes for hot group %u", group.uncompressedSize, groupIndex);
       hotGroupFont = nullptr;
       hotGroupIndex = UINT16_MAX;
@@ -183,9 +188,10 @@ const uint8_t* FontDecompressor::getBitmap(const EpdFontData* fontData, const Ep
       return nullptr;
     }
 
-    if (!decompressGroup(fontData, groupIndex, hotGroup.data(), group.uncompressedSize)) {
-      hotGroup.clear();
-      hotGroup.shrink_to_fit();
+    if (!decompressGroup(fontData, groupIndex, hotGroup, group.uncompressedSize)) {
+      free(hotGroup);
+      hotGroup = nullptr;
+      hotGroupCapacity = 0;
       hotGroupFont = nullptr;
       hotGroupIndex = UINT16_MAX;
       stats.getBitmapTimeUs += micros() - tStart;

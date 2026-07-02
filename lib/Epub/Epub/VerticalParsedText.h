@@ -113,7 +113,18 @@ class VerticalParsedText {
   // SETTINGS.lineCompression plays for horizontal text; exposed as a
   // setter so EpubReaderActivity can wire it to a reader setting instead
   // of a hardcoded constant.
-  void reset() { stream_.clear(); paragraphBreaksBeforeIndex_.clear(); }
+  // Also clears oom_: that flag means "the reallocation attempted right then didn't fit", not
+  // "this chapter is unbuildable" -- latching it across batches would silently truncate every
+  // batch after the first transient low-memory moment, for the rest of the chapter.
+  void reset() {
+    stream_.clear();
+    paragraphBreaksBeforeIndex_.clear();
+    oom_ = false;
+  }
+  // Number of characters currently buffered for layout. Callers batching a long chapter use this
+  // to flush layoutPages()+reset() periodically so stream_ stays O(batch) instead of O(chapter)
+  // -- a whole chapter's worth of PendingChars (32 bytes each) cannot fit in RAM on-device.
+  size_t pendingCount() const { return stream_.size(); }
   void setColumnGapPx(int gapPx) { columnGapPx_ = gapPx; }
   // Extra right-side padding (in pixels) reserved for vertical ruby so it
   // doesn't clip against the right edge.
@@ -142,6 +153,22 @@ class VerticalParsedText {
   // fresh column, matching how horizontal layout starts a new line).
   std::vector<PendingChar> stream_;
   std::vector<size_t> paragraphBreaksBeforeIndex_;
+
+  // Set once free heap drops critically low; remaining characters/paragraphs for this chapter
+  // are silently dropped instead of risking an OOM abort inside stream_'s reallocation (see
+  // canPushStreamChar()).
+  bool oom_ = false;
+
+  // Call before every stream_.push_back(). Only checks free heap when the vector is actually
+  // about to reallocate (size == capacity) -- cheap in the common case where capacity headroom
+  // from reserve() already covers this push. Returns false (and latches oom_) if a reallocation
+  // would be needed and heap is too tight to risk it; the caller should skip this element.
+  bool canPushStreamChar();
+
+  // Codepoint-estimating, request-size-aware reserve for stream_ (see .cpp for the full story --
+  // both the byte-count-as-slot-count over-request and the unchecked-request-size reserve have
+  // crashed a real device).
+  void reserveStreamFor(size_t utf8Bytes);
 
   int charAdvancePx() const;
 };

@@ -2,6 +2,7 @@
 
 #include <Arduino.h>
 #include <Logging.h>
+#include <Memory.h>
 
 #include <algorithm>
 #include <array>
@@ -478,6 +479,23 @@ void CssParser::processRuleBlockWithStyle(std::string_view selectorGroup, const 
         if (it != rulesBySelector_.end()) {
           it->second.applyOver(style);
         } else {
+          // unordered_map::emplace() allocates a hash node internally via bare operator new,
+          // which aborts the process on OOM under -fno-exceptions (same hazard as the two sites
+          // already fixed in loadFromCache() -- confirmed via a real device crash report:
+          // abort() inside this exact emplace() while parsing a large CSS file). Skip the
+          // remaining rules in this file rather than crash; already-parsed rules are kept.
+          //
+          // MIN_FREE_HEAP_FOR_CSS (48KB) is sized for the bulk cache-load path -- using it here
+          // for a single hash-node insert (a selector string + CssStyle, a few hundred bytes) was
+          // confirmed on a real device to flood-reject nearly every remaining rule the moment free
+          // heap dipped anywhere below 48KB, silently discarding most of a chapter's styling.
+          constexpr uint32_t MIN_FREE_HEAP_FOR_ONE_RULE = 4 * 1024;
+          if (ESP.getMaxAllocHeap() < MIN_FREE_HEAP_FOR_ONE_RULE) {
+            LOG_ERR("CSS", "Low heap (%u bytes) while parsing CSS rules; skipping remaining selectors",
+                    ESP.getMaxAllocHeap());
+            limitReached = true;
+            return;
+          }
           rulesBySelector_.emplace(std::string(sel), style);
         }
       });
@@ -632,11 +650,11 @@ bool CssParser::loadFromStream(HalFile& source) {
 
 CssStyle CssParser::resolveStyle(std::string_view tagName, std::string_view classAttr) const {
   static bool lowHeapWarningLogged = false;
-  if (ESP.getFreeHeap() < MIN_FREE_HEAP_FOR_CSS) {
+  if (ESP.getMaxAllocHeap() < MIN_FREE_HEAP_FOR_CSS) {
     if (!lowHeapWarningLogged) {
       lowHeapWarningLogged = true;
       LOG_DBG("CSS", "Warning: low heap (%u bytes) below MIN_FREE_HEAP_FOR_CSS (%u), returning empty style",
-              ESP.getFreeHeap(), static_cast<unsigned>(MIN_FREE_HEAP_FOR_CSS));
+              ESP.getMaxAllocHeap(), static_cast<unsigned>(MIN_FREE_HEAP_FOR_CSS));
     }
     return CssStyle{};
   }
@@ -810,8 +828,24 @@ bool CssParser::loadFromCache() {
   constexpr size_t CSS_FIXED_STYLE_BYTES =
       5 * sizeof(uint8_t) + (CSS_LENGTH_FIELD_COUNT * CSS_LENGTH_BYTES) + sizeof(uint8_t) + sizeof(uint32_t);
 
+  // Below this, `rulesBySelector_[selector] = style` allocates a new map node every iteration.
+  // std::map's internal allocator (like every other unguarded STL allocation in this loop) aborts
+  // the whole process on OOM under -fno-exceptions -- there is no way to catch that at the call
+  // site. Bail out gracefully (drop the cache, fall back to unstyled rendering) instead of letting
+  // a large SD-card font's memory footprint plus CSS rule growth crash the device mid-loop.
+  // Reuses MIN_FREE_HEAP_FOR_CSS (see file-scope constant) for consistency with the same guard
+  // in processRuleBlockWithStyle() -- a device crash at ~28KB free showed the earlier 24KB
+  // threshold here cut it too close.
+
   // Read each rule
   for (uint16_t i = 0; i < ruleCount; ++i) {
+    if (ESP.getMaxAllocHeap() < MIN_FREE_HEAP_FOR_CSS) {
+      LOG_ERR("CSS", "Low heap (%u bytes) while loading CSS cache at rule %u/%u; aborting cache load",
+              ESP.getMaxAllocHeap(), i, ruleCount);
+      rulesBySelector_.clear();
+      return false;
+    }
+
     // Read selector string
     uint16_t selectorLen = 0;
     if (!hasRemainingBytes(sizeof(selectorLen))) {
@@ -829,12 +863,24 @@ bool CssParser::loadFromCache() {
       return false;
     }
 
-    std::string selector;
-    selector.resize(selectorLen);
-    if (file.read(&selector[0], selectorLen) != selectorLen) {
+    // Read into a nothrow-allocated buffer first, not directly into a resized std::string:
+    // std::string::resize()'s internal allocator calls bare operator new, which aborts the
+    // process on OOM under -fno-exceptions instead of returning an error (see the identical
+    // fix applied to FontDecompressor::getBitmap() this session). selectorLen is bounded to
+    // MAX_SELECTOR_LENGTH above, so this is only reachable under genuine heap exhaustion
+    // (e.g. a large SD-card font's kern/advance tables competing for the same heap) -- in
+    // that case we want to fail this cache load gracefully, not crash the whole device.
+    auto selectorBuf = makeUniqueNoThrow<char[]>(selectorLen);
+    if (!selectorBuf) {
+      LOG_ERR("CSS", "OOM allocating %u-byte selector buffer during cache load", selectorLen);
       rulesBySelector_.clear();
       return false;
     }
+    if (file.read(reinterpret_cast<uint8_t*>(selectorBuf.get()), selectorLen) != selectorLen) {
+      rulesBySelector_.clear();
+      return false;
+    }
+    std::string selector(selectorBuf.get(), selectorLen);
 
     if (!hasRemainingBytes(CSS_FIXED_STYLE_BYTES)) {
       LOG_DBG("CSS", "Truncated CSS cache while reading style payload");

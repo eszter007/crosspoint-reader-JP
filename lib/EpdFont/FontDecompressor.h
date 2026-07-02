@@ -69,7 +69,13 @@ class FontDecompressor {
   // Kept in byte-aligned format; individual glyphs are compacted on demand into hotGlyphBuf.
   const EpdFontData* hotGroupFont = nullptr;
   uint16_t hotGroupIndex = UINT16_MAX;
-  std::vector<uint8_t> hotGroup;
+  // Raw malloc'd buffer (not std::vector): group.uncompressedSize can run up to ~64KB and this is
+  // reallocated on every cache-miss group swap. With -fno-exceptions, vector::resize()'s internal
+  // operator new aborts the process on OOM instead of failing gracefully -- malloc + null-check lets
+  // us log and degrade instead of crashing. Capacity is retained across swaps to avoid a malloc/free
+  // cycle on every glyph lookup that lands in a different group.
+  uint8_t* hotGroup = nullptr;
+  uint32_t hotGroupCapacity = 0;
 
   // Scratch buffer for compacting a single glyph from the hot group.
   // Valid until the next getBitmap() call.

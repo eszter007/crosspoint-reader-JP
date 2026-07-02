@@ -825,10 +825,15 @@ if compress:
         (0xFFFD, 0xFFFD),   # Replacement Character
     ]
 
-    # 64 KB cap: large enough to hold any single built-in script group with
-    # headroom, small enough to be a comfortable transient malloc on the
-    # ESP32-C3.
-    GROUP_MAX_UNCOMPRESSED_BYTES = 65536
+    # 16 KB cap (was 64 KB): a real device running a CJK-heavy vertical-text book confirmed 64KB
+    # was NOT a comfortable transient malloc after all -- FontDecompressor's hot-group buffer
+    # (one full group, malloc'd on every group-miss) repeatedly failed to find a contiguous 64KB
+    # block once the rest of the app's heap usage (EPUB/CSS caches, image decode buffers, vertical
+    # text layout) left the remaining free memory fragmented, causing dropped/missing glyphs even
+    # though the crash itself was already fixed (malloc+null-check instead of an abort). Smaller
+    # groups mean more frequent group-swap decompression (more CPU) but each individual malloc is
+    # far more likely to actually succeed under real-world memory pressure.
+    GROUP_MAX_UNCOMPRESSED_BYTES = 16384
 
     def get_script_group(code_point):
         for i, (start, end) in enumerate(SCRIPT_GROUP_RANGES):

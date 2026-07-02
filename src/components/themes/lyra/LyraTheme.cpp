@@ -2,6 +2,7 @@
 
 #include <Epub/converters/ImageDecoderFactory.h>
 #include <Epub/converters/ImageToFramebufferDecoder.h>
+#include <FontCacheManager.h>
 #include <FsHelpers.h>
 #include <GfxRenderer.h>
 #include <HalGPIO.h>
@@ -514,6 +515,17 @@ void LyraTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, const std:
                                hPaddingInSelection, cornerRadius, false, false, true, true, Color::LightGray);
     }
 
+    // Prewarm the font cache for the title/author text about to be drawn. Without this, non-Latin
+    // text (e.g. Japanese titles) falls through FontDecompressor's slow single-slot "hot group" path,
+    // which decompresses up to ~64KB per glyph-group miss on every render -- this is what crashed on
+    // real hardware (a failed allocation there used to abort the process; see FontDecompressor.cpp).
+    if (auto* fcm = renderer.getFontCacheManager()) {
+      fcm->prewarmCache(UI_12_FONT_ID, book.title.c_str(), 1 << EpdFontFamily::BOLD);
+      if (!book.author.empty()) {
+        fcm->prewarmCache(UI_10_FONT_ID, book.author.c_str(), 1 << EpdFontFamily::REGULAR);
+      }
+    }
+
     auto titleLines = renderer.wrappedText(UI_12_FONT_ID, book.title.c_str(), textWidth, 3, EpdFontFamily::BOLD);
 
     auto author = renderer.truncatedText(UI_10_FONT_ID, book.author.c_str(), textWidth);
@@ -537,6 +549,16 @@ void LyraTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, const std:
       snprintf(pctBuf, sizeof(pctBuf), "%d%%", progressPercent);
       titleY += renderer.getLineHeight(SMALL_FONT_ID);
       renderer.drawText(SMALL_FONT_ID, textX, titleY, pctBuf, true);
+    }
+
+    // Release the page slots claimed by the prewarm above. FontDecompressor's page-slot pool is
+    // small (4 total) and shared globally across every screen -- unlike the reader's PrewarmScope
+    // (which clears on scope exit after each page), a bare prewarmCache() call has no owner to
+    // free it. Without this, slots fill up permanently after a handful of renders and every
+    // subsequent prewarm silently fails, degrading back to (and now spamming logs on top of) the
+    // slow per-glyph decompression path this was meant to avoid.
+    if (auto* fcm = renderer.getFontCacheManager()) {
+      fcm->clearCache();
     }
   } else {
     drawEmptyRecents(renderer, rect);

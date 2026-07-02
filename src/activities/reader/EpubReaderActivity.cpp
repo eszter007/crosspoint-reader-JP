@@ -990,6 +990,19 @@ void EpubReaderActivity::render(RenderLock&& lock) {
 
   // --- Vertical text mode path ---
   if (useVerticalText()) {
+    if (failedVerticalSpineIndex == currentSpineIndex) {
+      // This spine index already failed to build this session (typically a transient low-heap
+      // allocation failure) -- show a real error instead of silently re-attempting the same
+      // expensive (multi-second) build every render, which looks like an infinite "Indexing" hang.
+      renderer.clearScreen();
+      renderer.drawCenteredText(UI_12_FONT_ID, 300, tr(STR_PAGE_LOAD_ERROR), true, EpdFontFamily::BOLD);
+      renderStatusBar();
+      renderer.displayBuffer();
+      automaticPageTurnActive = false;
+      showPendingSyncSaveError();
+      return;
+    }
+
     if (!verticalSection) {
       LOG_DBG("ERS", "Loading vertical section, index: %d", currentSpineIndex);
       verticalSection = std::unique_ptr<VerticalSection>(new VerticalSection(epub, currentSpineIndex, renderer));
@@ -999,8 +1012,19 @@ void EpubReaderActivity::render(RenderLock&& lock) {
         LOG_DBG("ERS", "Vertical cache not found, building...");
         GUI.drawPopup(renderer, tr(STR_INDEXING));
 
+        // Building a chapter's vertical section is the single most memory-intensive step in the
+        // reader (whole-chapter text extraction + XML parsing + layout, observed on a real device
+        // needing 50-100+ KB of headroom for image-heavy Japanese chapters). FontDecompressor's
+        // "hot group" buffer (up to ~64KB, retained across renders for reuse -- see
+        // FontDecompressor.cpp) is dead weight at this exact moment since nothing has been drawn
+        // yet; free it here to hand that headroom to the extraction/layout step that needs it most.
+        if (auto* fcm = renderer.getFontCacheManager()) {
+          fcm->clearCache();
+        }
+
         if (!verticalSection->createSectionFile(fontId, viewportWidth, viewportHeight)) {
           LOG_ERR("ERS", "Failed to build vertical section");
+          failedVerticalSpineIndex = currentSpineIndex;
           verticalSection.reset();
           showPendingSyncSaveError();
           return;

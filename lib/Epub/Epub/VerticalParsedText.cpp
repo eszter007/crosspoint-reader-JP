@@ -1,10 +1,20 @@
 #include "VerticalParsedText.h"
 
+#include <Arduino.h>
+#include <Logging.h>
+
 #include <algorithm>
 #include <cmath>
 
 #include "GfxRenderer.h"
 #include "Kinsoku.h"
+
+namespace {
+// A reserve() big enough to satisfy this margin should always succeed even under pressure --
+// below it, skip reserving and let the vector grow incrementally (smaller, more-likely-to-succeed
+// allocations) rather than attempt one large upfront allocation that's more likely to fail outright.
+constexpr uint32_t MIN_FREE_HEAP_FOR_RESERVE = 32 * 1024;
+}  // namespace
 
 namespace {
 
@@ -156,9 +166,49 @@ int VerticalParsedText::charAdvancePx() const {
   return renderer_.getLineHeight(fontId_);
 }
 
+void VerticalParsedText::reserveStreamFor(size_t utf8Bytes) {
+  // CJK prose is ~3 UTF-8 bytes per codepoint, so bytes/3 (+ slack for embedded ASCII) closely
+  // estimates the PendingChar slots this text needs. An earlier version of this reserve used the
+  // raw byte count as the slot count -- a 3x over-request at 32 bytes per slot (~96 bytes reserved
+  // per actual character), which crashed a real device. The affordability check below is on the
+  // REQUEST size, not just current free heap: reserve() is one contiguous allocation that aborts
+  // the process on failure under -fno-exceptions, so a request that doesn't comfortably fit is
+  // skipped entirely -- incremental push_back growth (guarded by canPushStreamChar) is the
+  // lower-risk path once memory is tight.
+  const size_t slots = utf8Bytes / 3 + 8;
+  const size_t needed = stream_.size() + slots;
+  if (needed <= stream_.capacity()) return;
+  const size_t requestBytes = needed * sizeof(PendingChar);
+  if (ESP.getMaxAllocHeap() < requestBytes + MIN_FREE_HEAP_FOR_RESERVE) {
+    LOG_ERR("VPT", "Reserve of %u bytes doesn't fit (free=%u); growing incrementally",
+            static_cast<unsigned>(requestBytes), ESP.getMaxAllocHeap());
+    return;
+  }
+  stream_.reserve(needed);
+}
+
+bool VerticalParsedText::canPushStreamChar() {
+  if (oom_) return false;
+  if (stream_.size() < stream_.capacity()) return true;  // no reallocation needed, cheap path
+  // Check against the actual next allocation (vector growth roughly doubles capacity), not a
+  // flat margin -- using MIN_FREE_HEAP_FOR_RESERVE (sized for a full bulk reserve) here made this
+  // latch on ordinary low-but-survivable heap and silently drop the rest of the batch. See the
+  // identical fix (and its real-device-crash-confirmed rationale) on pushGlyph() in layoutPages().
+  const size_t nextCapacity = stream_.capacity() == 0 ? 1 : stream_.capacity() * 2;
+  const size_t requestBytes = nextCapacity * sizeof(PendingChar);
+  constexpr uint32_t SMALL_ALLOC_MARGIN = 16 * 1024;
+  if (ESP.getMaxAllocHeap() >= requestBytes + SMALL_ALLOC_MARGIN) return true;
+  LOG_ERR("VPT", "Low heap (%u bytes, need ~%u) while building vertical text stream; truncating batch",
+          ESP.getMaxAllocHeap(), static_cast<unsigned>(requestBytes));
+  oom_ = true;
+  return false;
+}
+
 void VerticalParsedText::addParagraph(const std::string& utf8Text) {
   const uint32_t paragraphIndex = static_cast<uint32_t>(paragraphBreaksBeforeIndex_.size());
   paragraphBreaksBeforeIndex_.push_back(stream_.size());
+
+  reserveStreamFor(utf8Text.size());
 
   size_t i = 0;
   while (i < utf8Text.size()) {
@@ -193,6 +243,7 @@ void VerticalParsedText::addParagraph(const std::string& utf8Text) {
       i += consumed;
       continue;
     }
+    if (!canPushStreamChar()) return;
     stream_.push_back(PendingChar{cp, paragraphIndex, static_cast<uint32_t>(i), 0, false, {}});
     i += consumed;
   }
@@ -201,6 +252,12 @@ void VerticalParsedText::addParagraph(const std::string& utf8Text) {
 void VerticalParsedText::addAnnotatedParagraph(const std::vector<RubyRun>& runs) {
   const uint32_t paragraphIndex = static_cast<uint32_t>(paragraphBreaksBeforeIndex_.size());
   paragraphBreaksBeforeIndex_.push_back(stream_.size());
+
+  {
+    size_t totalBaseBytes = 0;
+    for (const auto& run : runs) totalBaseBytes += run.baseText.size();
+    reserveStreamFor(totalBaseBytes);
+  }
 
   for (const auto& run : runs) {
     if (run.baseText.empty()) continue;
@@ -245,6 +302,7 @@ void VerticalParsedText::addAnnotatedParagraph(const std::vector<RubyRun>& runs)
 
     if (run.rubyText.empty()) {
       for (size_t k = 0; k < baseCps.size(); k++) {
+        if (!canPushStreamChar()) return;
         stream_.push_back(
             PendingChar{baseCps[k], paragraphIndex, static_cast<uint32_t>(baseOffsets[k]), run.style, run.emphasis, {}});
       }
@@ -287,6 +345,7 @@ void VerticalParsedText::addAnnotatedParagraph(const std::vector<RubyRun>& runs)
             slice.push_back(static_cast<char>(0x80 | (rcp & 0x3F)));
           }
         }
+        if (!canPushStreamChar()) return;
         stream_.push_back(PendingChar{baseCps[k], paragraphIndex,
                                        static_cast<uint32_t>(baseOffsets[k]), run.style, run.emphasis, std::move(slice)});
       }
@@ -320,9 +379,78 @@ std::vector<VerticalPage> VerticalParsedText::layoutPages() {
   // fresh column.
   size_t nextParagraphBreakIdx = 1; // index 0 is the very first paragraph, already "started"
 
+  // One page's cell grid is fixed by screen geometry -- reserving it up front turns what used to
+  // be several dozen incremental (and, on a fragmented heap, crash-prone) reallocations per page
+  // into a single allocation. Confirmed via a real device crash inside this exact glyphs vector's
+  // reallocation, even with ~97KB nominally free (heap fragmentation, not exhaustion).
+  const size_t glyphsPerPage = static_cast<size_t>(columnsPerPage) * rowsPerColumn;
+
+  // Worst case for `pages`: every column is forced to end after a single row (rowsPerColumn=1,
+  // or every character forces a fresh column via a paragraph/line break) -- i.e. one page per
+  // `columnsPerPage` characters in this batch. A fixed guess (previously 4) undercounted on
+  // narrower columns and still crashed inside this same reallocation; computing the real bound
+  // costs nothing since VerticalPage itself is small (~80 bytes) even when over-reserved.
+  {
+    const size_t worstCasePages = stream_.size() / std::max<size_t>(1, columnsPerPage) + 2;
+    const size_t requestBytes = worstCasePages * sizeof(VerticalPage);
+    if (ESP.getMaxAllocHeap() >= requestBytes + MIN_FREE_HEAP_FOR_RESERVE) {
+      pages.reserve(worstCasePages);
+    } else {
+      LOG_ERR("VPT", "Skipping pages reserve (%u bytes doesn't fit, free=%u); growing incrementally",
+              static_cast<unsigned>(requestBytes), ESP.getMaxAllocHeap());
+    }
+  }
+
+  // Every reserve() below this point is a single contiguous allocation that aborts the whole
+  // process on failure under -fno-exceptions -- confirmed via a real device crash inside this
+  // exact reserve, immediately after the *previous* page was pushed (which can itself burst
+  // memory use during its own relocation). Check the request against free heap every time.
+  auto reservePageGlyphs = [&](VerticalPage& p) {
+    const size_t requestBytes = glyphsPerPage * sizeof(VerticalGlyph);
+    if (ESP.getMaxAllocHeap() >= requestBytes + MIN_FREE_HEAP_FOR_RESERVE) {
+      p.glyphs.reserve(glyphsPerPage);
+    } else {
+      LOG_ERR("VPT", "Skipping page glyphs reserve (%u bytes doesn't fit, free=%u); growing incrementally",
+              static_cast<unsigned>(requestBytes), ESP.getMaxAllocHeap());
+    }
+  };
+
+  // Skipping the reserve above is only safe if every individual push_back is ALSO guarded --
+  // "grows incrementally" isn't automatically safe on a heap this tight, and a real device crash
+  // confirmed exactly that: the skipped-reserve fallback still aborted inside the first
+  // push_back's own reallocation. Only checks free heap when a reallocation is actually imminent
+  // (size == capacity), so this is cheap in the (now common, thanks to reservePageGlyphs) case
+  // where headroom already covers the push. Drops the glyph (visually a rare missing character in
+  // an extreme low-memory tail case) rather than crash the whole device.
+  //
+  // The check must be against the ACTUAL next allocation size, not a flat margin: vector growth
+  // roughly doubles capacity each time, so the very first push from empty needs ~1 element
+  // (~50 bytes) while a push near a nearly-full page needs nearly as much as the original bulk
+  // reserve. A real device crash confirmed the failure mode of getting this wrong: using
+  // MIN_FREE_HEAP_FOR_RESERVE (32KB) as a flat per-glyph margin meant that once free heap sat
+  // anywhere below 32KB -- which is otherwise completely survivable for a ~50-byte push -- every
+  // single glyph was dropped, silently blanking entire pages.
+  auto pushGlyph = [](std::vector<VerticalGlyph>& glyphs, const VerticalGlyph& g) {
+    if (glyphs.size() < glyphs.capacity()) {
+      glyphs.push_back(g);
+      return true;
+    }
+    const size_t nextCapacity = glyphs.capacity() == 0 ? 1 : glyphs.capacity() * 2;
+    const size_t requestBytes = nextCapacity * sizeof(VerticalGlyph);
+    constexpr uint32_t SMALL_ALLOC_MARGIN = 16 * 1024;  // headroom for the rest of the app, not the reserve() margin
+    if (ESP.getMaxAllocHeap() >= requestBytes + SMALL_ALLOC_MARGIN) {
+      glyphs.push_back(g);
+      return true;
+    }
+    LOG_ERR("VPT", "Low heap (%u bytes, need ~%u); dropping glyph", ESP.getMaxAllocHeap(),
+            static_cast<unsigned>(requestBytes));
+    return false;
+  };
+
   VerticalPage page;
   page.columnCount = columnsPerPage;
   page.rowsPerColumn = rowsPerColumn;
+  reservePageGlyphs(page);
 
   uint16_t column = 0;
   uint16_t row = 0;
@@ -335,6 +463,7 @@ std::vector<VerticalPage> VerticalParsedText::layoutPages() {
       page = VerticalPage{};
       page.columnCount = columnsPerPage;
       page.rowsPerColumn = rowsPerColumn;
+      reservePageGlyphs(page);
       column = 0;
       row = 0;
     }
@@ -358,7 +487,7 @@ std::vector<VerticalPage> VerticalParsedText::layoutPages() {
       g.y = static_cast<uint16_t>(rowIdx * cellPx);
       g.renderKind = VerticalGlyph::RotatedPunct;
       g.rubyText = pc.rubyText;
-      page.glyphs.push_back(g);
+      pushGlyph(page.glyphs, g);
       return;
     }
 
@@ -370,7 +499,7 @@ std::vector<VerticalPage> VerticalParsedText::layoutPages() {
       g.y = static_cast<uint16_t>(rowIdx * cellPx + ascender - std::max(1, cellPx / 8));
       g.renderKind = VerticalGlyph::Upright;
       g.rubyText = pc.rubyText;
-      page.glyphs.push_back(g);
+      pushGlyph(page.glyphs, g);
       return;
     }
 
@@ -392,7 +521,7 @@ std::vector<VerticalPage> VerticalParsedText::layoutPages() {
     g.y = static_cast<uint16_t>(gy);
     g.renderKind = VerticalGlyph::Upright;
     g.rubyText = pc.rubyText;
-    page.glyphs.push_back(g);
+    pushGlyph(page.glyphs, g);
   };
 
   auto placeUpright = [&](const PendingChar& pc) { placeUprightAt(pc, column, row); };
@@ -460,7 +589,7 @@ std::vector<VerticalPage> VerticalParsedText::layoutPages() {
         g.style = pc.style;
         g.renderKind = VerticalGlyph::UprightRun;
         g.rotatedRunText = runUtf8;
-        page.glyphs.push_back(g);
+        pushGlyph(page.glyphs, g);
 
         row++;
         if (row >= rowsPerColumn) {
@@ -504,7 +633,7 @@ std::vector<VerticalPage> VerticalParsedText::layoutPages() {
         g.style = pc.style;
         g.renderKind = VerticalGlyph::RotatedRun;
         g.rotatedRunText = runUtf8;
-        page.glyphs.push_back(g);
+        pushGlyph(page.glyphs, g);
 
         row = static_cast<uint16_t>(row + rowsNeeded);
         if (row >= rowsPerColumn) {
@@ -564,7 +693,7 @@ std::vector<VerticalPage> VerticalParsedText::layoutPages() {
           g.style = pc.style;
           g.renderKind = VerticalGlyph::RotatedRun;
           g.rotatedRunText = remaining;
-          page.glyphs.push_back(g);
+          pushGlyph(page.glyphs, g);
           row = static_cast<uint16_t>(row + remRows);
           if (row >= rowsPerColumn) {
             column++;
@@ -607,7 +736,7 @@ std::vector<VerticalPage> VerticalParsedText::layoutPages() {
             g.byteOffset = pc.byteOffset;
             g.renderKind = VerticalGlyph::RotatedRun;
             g.rotatedRunText = remaining;
-            page.glyphs.push_back(g);
+            pushGlyph(page.glyphs, g);
             row = std::min(remRows, rowsPerColumn);
             if (row >= rowsPerColumn) {
               column++;
@@ -636,7 +765,7 @@ std::vector<VerticalPage> VerticalParsedText::layoutPages() {
         g.style = pc.style;
         g.renderKind = VerticalGlyph::RotatedRun;
         g.rotatedRunText = chunk;
-        page.glyphs.push_back(g);
+        pushGlyph(page.glyphs, g);
 
         row = static_cast<uint16_t>(row + chunkRows);
         if (row >= rowsPerColumn) {
@@ -666,7 +795,14 @@ std::vector<VerticalPage> VerticalParsedText::layoutPages() {
       } else if (!pages.empty()) {
         // Page just broke — pull back to the last column of the previous page.
         VerticalPage& prevPage = pages.back();
-        if (!prevPage.glyphs.empty()) {
+        // prevPage.glyphs was reserved for exactly one page's grid capacity when it was created;
+        // this oikomi pull-back is the one place that can push a page over that reservation,
+        // forcing libstdc++ to reallocate+relocate an already-near-full glyph array. Confirmed via
+        // a real device crash inside this exact reallocation. If there's no reservation headroom
+        // and heap is tight, skip the pull-back (the character starts the next page/column
+        // normally instead) rather than risk it -- a minor formatting nicety, not correctness.
+        const bool hasHeadroom = prevPage.glyphs.size() < prevPage.glyphs.capacity();
+        if (!prevPage.glyphs.empty() && (hasHeadroom || ESP.getMaxAllocHeap() >= MIN_FREE_HEAP_FOR_RESERVE)) {
           const VerticalGlyph& prev = prevPage.glyphs.back();
           VerticalGlyph g;
           g.codepoint = pc.codepoint;
@@ -688,7 +824,7 @@ std::vector<VerticalPage> VerticalParsedText::layoutPages() {
           }
           g.paragraphIndex = pc.paragraphIndex;
           g.byteOffset = pc.byteOffset;
-          prevPage.glyphs.push_back(g);
+          pushGlyph(prevPage.glyphs, g);
           idx++;
           continue;
         }

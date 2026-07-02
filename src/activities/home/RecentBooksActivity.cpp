@@ -1,6 +1,7 @@
 #include "RecentBooksActivity.h"
 
 #include <Bitmap.h>
+#include <FontCacheManager.h>
 #include <FsHelpers.h>
 #include <GfxRenderer.h>
 #include <HalStorage.h>
@@ -650,6 +651,23 @@ void RecentBooksActivity::renderBooksTab(int contentTop, int contentHeight) {
   // Render one extra row beyond the visible area so the next row peeks
   // behind the button bar, hinting that more content is available.
   const int renderRows = visibleRows + (totalRows > visibleRows ? 1 : 0);
+
+  // Prewarm titles for visible cells (drawn as a fallback when a cell has no cover thumbnail) --
+  // see the matching comment in renderShelvesTab for why this matters for non-Latin text.
+  if (auto* fcm = renderer.getFontCacheManager()) {
+    std::string prewarmBuf;
+    prewarmBuf.reserve(256);
+    for (int row = scrollRow; row < std::min(scrollRow + renderRows, totalRows); row++) {
+      for (int col = 0; col < GRID_COLS; col++) {
+        const int idx = row * GRID_COLS + col;
+        if (idx >= static_cast<int>(recentBooks.size())) break;
+        prewarmBuf += recentBooks[idx].title;
+        prewarmBuf += ' ';
+      }
+    }
+    fcm->prewarmCache(SMALL_FONT_ID, prewarmBuf.c_str(), 1 << EpdFontFamily::REGULAR);
+  }
+
   for (int row = scrollRow; row < std::min(scrollRow + renderRows, totalRows); row++) {
     for (int col = 0; col < GRID_COLS; col++) {
       const int idx = row * GRID_COLS + col;
@@ -739,6 +757,12 @@ void RecentBooksActivity::renderBooksTab(int contentTop, int contentHeight) {
     }
   }
 
+  // Release the page slots claimed by the prewarm above -- see the matching comment in
+  // LyraTheme::drawRecentBookCover for why this is required (FontDecompressor's page-slot pool
+  // is small and shared globally; an unreleased prewarm permanently starves every other screen).
+  if (auto* fcm = renderer.getFontCacheManager()) {
+    fcm->clearCache();
+  }
 }
 
 void RecentBooksActivity::renderShelvesTab(int contentTop, int contentHeight) {
@@ -762,6 +786,20 @@ void RecentBooksActivity::renderShelvesTab(int contentTop, int contentHeight) {
 
   const int thumbH = metrics.homeCoverHeight;
   const int chevronMargin = 15;
+
+  // Prewarm the font cache with all visible folder names before drawing. Folder names are drawn
+  // unconditionally on every render (unlike cover-fallback titles below), so without this, non-Latin
+  // names (e.g. Japanese folders) hit FontDecompressor's slow single-slot fallback on every navigation
+  // step -- one full ~64KB group decompression per name that lands in a different glyph group.
+  if (auto* fcm = renderer.getFontCacheManager()) {
+    std::string prewarmBuf;
+    prewarmBuf.reserve(256);
+    for (int i = scrollOffset; i < std::min(scrollOffset + visibleItems, shelfCount); i++) {
+      prewarmBuf += shelves[i].folderName;
+      prewarmBuf += ' ';
+    }
+    fcm->prewarmCache(UI_10_FONT_ID, prewarmBuf.c_str(), 1 << EpdFontFamily::BOLD);
+  }
 
   for (int i = scrollOffset; i < std::min(scrollOffset + visibleItems, shelfCount); i++) {
     const auto& shelf = shelves[i];
@@ -851,6 +889,12 @@ void RecentBooksActivity::renderShelvesTab(int contentTop, int contentHeight) {
     const int thumbBarY = contentTop + (contentHeight - thumbBarH) * scrollOffset / (shelfCount - visibleItems);
     renderer.fillRect(barX, thumbBarY, metrics.scrollBarWidth, thumbBarH, true);
   }
+
+  // Release the page slots claimed by the prewarm above -- see the matching comment in
+  // LyraTheme::drawRecentBookCover for why this is required.
+  if (auto* fcm = renderer.getFontCacheManager()) {
+    fcm->clearCache();
+  }
 }
 
 void RecentBooksActivity::renderShelfBooksView(int contentTop, int contentHeight) {
@@ -875,6 +919,22 @@ void RecentBooksActivity::renderShelfBooksView(int contentTop, int contentHeight
   int selectedRow = shelfContentIndex >= 0 ? shelfContentIndex / GRID_COLS : 0;
   if (selectedRow < shelfScrollRow) shelfScrollRow = selectedRow;
   if (selectedRow >= shelfScrollRow + visibleRows) shelfScrollRow = selectedRow - visibleRows + 1;
+
+  // Prewarm titles for visible cells (drawn as a fallback when a cell has no cover thumbnail) --
+  // see the matching comment in renderShelvesTab for why this matters for non-Latin text.
+  if (auto* fcm = renderer.getFontCacheManager()) {
+    std::string prewarmBuf;
+    prewarmBuf.reserve(256);
+    for (int row = shelfScrollRow; row < std::min(shelfScrollRow + visibleRows, totalRows); row++) {
+      for (int col = 0; col < GRID_COLS; col++) {
+        const int idx = row * GRID_COLS + col;
+        if (idx >= static_cast<int>(shelfBooks.size())) break;
+        prewarmBuf += shelfBooks[idx].title;
+        prewarmBuf += ' ';
+      }
+    }
+    fcm->prewarmCache(SMALL_FONT_ID, prewarmBuf.c_str(), 1 << EpdFontFamily::REGULAR);
+  }
 
   for (int row = shelfScrollRow; row < std::min(shelfScrollRow + visibleRows, totalRows); row++) {
     for (int col = 0; col < GRID_COLS; col++) {
@@ -970,6 +1030,12 @@ void RecentBooksActivity::renderShelfBooksView(int contentTop, int contentHeight
     const int thumbH = std::max(10, contentHeight * visibleRows / totalRows);
     const int thumbY = contentTop + (contentHeight - thumbH) * shelfScrollRow / (totalRows - visibleRows);
     renderer.fillRect(barX, thumbY, metrics.scrollBarWidth, thumbH, true);
+  }
+
+  // Release the page slots claimed by the prewarm above -- see the matching comment in
+  // LyraTheme::drawRecentBookCover for why this is required.
+  if (auto* fcm = renderer.getFontCacheManager()) {
+    fcm->clearCache();
   }
 }
 

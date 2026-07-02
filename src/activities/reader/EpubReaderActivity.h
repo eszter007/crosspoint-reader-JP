@@ -15,6 +15,12 @@ class EpubReaderActivity final : public Activity {
   std::shared_ptr<Epub> epub;
   std::unique_ptr<Section> section = nullptr;
   std::unique_ptr<VerticalSection> verticalSection = nullptr;
+  // Spine index whose vertical section last failed to build (e.g. transient low-heap allocation
+  // failure). Prevents an immediate automatic retry loop: without this, verticalSection.reset()
+  // on failure leaves `!verticalSection` true, so the very next render() call retries the same
+  // expensive build (indexing an entire chapter) again -- observed on a real device as an
+  // indefinite "Indexing" popup that silently re-failed every ~12 seconds with no visible error.
+  int failedVerticalSpineIndex = -1;
   int currentSpineIndex = 0;
   int nextPageNumber = 0;
   std::optional<uint16_t> pendingPageJump;
